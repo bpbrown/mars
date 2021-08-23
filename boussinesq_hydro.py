@@ -56,7 +56,6 @@ import logging
 logger = logging.getLogger(__name__)
 dlog = logging.getLogger('matplotlib')
 dlog.setLevel(logging.WARNING)
-from structure import lane_emden
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -140,74 +139,41 @@ angular = lambda A: de.operators.AngularComponent(A, index=1)
 trace = lambda A: de.operators.Trace(A)
 power = lambda A, B: de.operators.Power(A, B)
 LiftTau = lambda A, n: de.operators.LiftTau(A,b,n)
-d_exp = lambda A: de.operators.UnaryGridFunction(np.exp, A)
-d_log = lambda A: de.operators.UnaryGridFunction(np.log, A)
+integ = lambda A: de.operators.Integrate(A, c)
 
 # NCCs and variables of the problem
 ez = de.field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
 ez.set_scales(b.dealias)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-ez.require_scales(1)
 ez_g = de.operators.Grid(ez).evaluate()
 
 T = de.field.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
-lnρ = de.field.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
-ρT_inv = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
 
 T['g'] = 0.5*(1-r1**2)
-lnρ['g'] = 0
 
 r_vec = de.field.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
-r_vec.require_scales(1)
-r_vec_g = de.operators.Grid(r_vec).evaluate()
-
-logger.info("shape and size of T['g'] {} & {}".format(T['g'].shape, T['g'].size))
-logger.info("shape and size of ρT_inv['g'] {} & {}".format(ρT_inv['g'].shape, ρT_inv['g'].size))
-
-lnT = d_log(T).evaluate()
-T_inv = power(T,-1).evaluate()
-grad_T = grad(T).evaluate()
-grad_lnT = grad(lnT).evaluate()
-ρ = d_exp(lnρ).evaluate()
-grad_lnρ = grad(lnρ).evaluate()
-ρ_inv = d_exp(-lnρ).evaluate()
-ρT_inv_rb = (T_inv*ρ_inv).evaluate()
-ρT_inv_rb.require_scales(1)
-if ρT_inv_rb['g'].size > 0:
-    ρT_inv['g'] = ρT_inv_rb['g']
+#r_vec_g = de.operators.Grid(r_vec).evaluate()
 
 # Entropy source function, inspired from MESA model
 source = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
-source.require_scales(L_dealias)
 source['g'] = 3
 
-#e = 0.5*(grad(u) + trans(grad(u)))
 e = grad(u) + trans(grad(u))
 e.store_last = True
 
-viscous_terms = div(e) + dot(grad_lnρ, e) - 2/3*grad(div(u)) - 2/3*grad_lnρ*div(u)
-trace_e = trace(e)
-trace_e.store_last = True
-Phi = trace(dot(e, e)) - 1/3*(trace_e*trace_e)
-
-ρ_inv['g'] = 1
-problem = problems.IVP([p, u,  τ_u, s,  τ_s], ncc_cutoff=ncc_cutoff)
-#problem.add_equation((ddt(u) + grad(p) - Co2*T*grad(s) - Ek*ρ_inv*viscous_terms + LiftTau(τ_u,-1),
-# problem.add_equation((ddt(u) + grad(p) + Co2*grad_T*s - Ek*ρ_inv*viscous_terms + LiftTau(τ_u,-1),
-problem.add_equation((div(u), 0), condition = "ntheta != 0")
-problem.add_equation((p, 0), condition = "ntheta == 0")
+problem = problems.IVP([p, u,  τ_u, s,  τ_s])
+problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
-                      - dot(u, e) - cross(ez_g, u)), condition = "ntheta != 0")
-problem.add_equation((u, 0), condition = "ntheta == 0")
+                      - dot(u, e) - cross(ez_g, u)))
 problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + LiftTau(τ_s,-1),
                      - dot(u, grad(s)) + Ek/Pr*source ))
 # Boundary conditions
 problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
-problem.add_equation((radial(angular(e(r=radius))), 0), condition = "ntheta != 0")
-problem.add_equation((τ_u, 0), condition = "ntheta == 0")
+problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")
+problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
 logger.info("Problem built")
 
@@ -222,35 +188,29 @@ if args['--benchmark']:
     s['g'] += 0.5*(1-r**2)
     logger.info("benchmark run with perturbations at ell={} with norm={}".format(𝓁, norm))
 else:
-    # need a noise generator
-    raise NotImplementedError("noise ICs not implemented")
-    s['g'] += amp*noise
+    rng = np.random.default_rng(seed=42+rank)
+    noise = de.field.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
+    noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
+    noise.require_scales(0.25)
+    noise['g']
+    noise.require_scales(1)
+    s.require_scales(1)
+    s['g'] += amp*noise['g']
 
 # Solver
-solver = solvers.InitialValueSolver(problem, timesteppers.SBDF2)
-
-reducer = GlobalArrayReducer(d.comm_cart)
-weight_theta = b.local_colatitude_weights(3/2)
-weight_r = b.local_radial_weights(3/2) #b.radial_basis.local_weights(3/2)*r**2
-vol_test = np.sum(weight_r*weight_theta+0*s['g'])*np.pi/(Lmax+1)/L_dealias
-vol_test = reducer.reduce_scalar(vol_test, MPI.SUM)
-vol = 4*np.pi/3*(radius)
-vol_correction = vol/vol_test
-
-logger.info(vol)
+solver = solvers.InitialValueSolver(problem, timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
 
 def vol_avg(q):
-    Q = np.sum(vol_correction*weight_r*weight_theta*q['g'])
-    Q *= (np.pi)/(Lmax+1)/L_dealias
-    Q /= (4/3*np.pi)
-    return reducer.reduce_scalar(Q, MPI.SUM)
+    Q = integ(q/(4/3*np.pi)).evaluate()['g']
+    if rank == 0:
+        return Q[0][0][0]
+    else:
+        return 0
 
 int_test = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
 int_test['g']=1
 int_test.require_scales(L_dealias)
 logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
-logger.info("vol_test={}".format(vol_test))
-logger.info("vol_correction={}".format(vol_correction))
 
 if rank == 0:
     scalar_file = pathlib.Path('{:s}/scalar_output.h5'.format(data_dir)).absolute()
@@ -277,6 +237,11 @@ if rank == 0:
     scalar_data = OrderedDict()
 
 
+KE = 0.5*dot(u,u)
+ens = dot(curl(u),curl(u))
+Ts = T*s
+Lz = dot(cross(r_vec,u), ez)
+
 report_cadence = 100
 energy_report_cadence = 100
 dt = float(args['--max_dt'])
@@ -287,37 +252,26 @@ main_start = time.time()
 good_solution = True
 while solver.ok and good_solution:
     if solver.iteration % energy_report_cadence == 0:
-        #q = (ρ*power(u,2)).evaluate() # can't eval in parallel with ρ
-        #q = (power(u,2)).evaluate()
-        #E0 = vol_avg(q)
+        KE_avg = vol_avg(KE.evaluate())
+        E0 = KE_avg/Ek**2
 
-        #q = (0.5*dot(u,u)).evaluate()
-        q = (0.5*dot(u,u)).evaluate()
-        KE = vol_avg(q)
-        E0 = KE/Ek**2
+        Ro = np.sqrt(vol_avg(ens.evaluate()))
 
-        q = (dot(curl(u),curl(u))).evaluate()
-        Ro = np.sqrt(vol_avg(q))
+        Re = np.sqrt(2*vol_avg(KE.evaluate()))/Ek
 
-        q = (dot(u,u)).evaluate()
-        Re = np.sqrt(vol_avg(q))/Ek
+        PE = Co2*vol_avg(Ts.evaluate())
 
-        q = (T*s).evaluate()
-        PE = Co2*vol_avg(q)
+        Lz_avg = vol_avg(Lz.evaluate())
 
-        #q = (dot(cross(r_vec_g,u), ez_g)).evaluate()
-        q = (dot(cross(r_vec,u), ez)).evaluate()
-        Lz = vol_avg(q)
-
-        logger.info("iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e}), KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek, KE, E0, PE, Lz))
+        logger.info("iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e}), KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek, KE_avg, E0, PE, Lz_avg))
         good_solution = np.isfinite(E0)
 
         if rank == 0:
             scalar_data['PE'] = PE
-            scalar_data['KE'] = KE
+            scalar_data['KE'] = KE_avg
             scalar_data['Re'] = Re
             scalar_data['Ro'] = Ro
-            scalar_data['Lz'] = Lz
+            scalar_data['Lz'] = Lz_avg
             scalar_data['E0'] = E0
 
             scalar_f = h5py.File('{:s}'.format(str(scalar_file)), 'a')
