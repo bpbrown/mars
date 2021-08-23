@@ -140,6 +140,7 @@ trace = lambda A: de.operators.Trace(A)
 power = lambda A, B: de.operators.Power(A, B)
 LiftTau = lambda A, n: de.operators.LiftTau(A,b,n)
 integ = lambda A: de.operators.Integrate(A, c)
+sqrt = lambda A: de.operators.UnaryGridFunction(np.sqrt, A)
 
 # NCCs and variables of the problem
 ez = de.field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
@@ -177,17 +178,18 @@ problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
 logger.info("Problem built")
 
+s.require_scales(L_dealias)
+s['g'] = 0.5*(1-r**2) # static solution
 
-amp = 1e-5
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
     norm = 1/(2**𝓁*np.math.factorial(𝓁))*np.sqrt(np.math.factorial(2*𝓁+1)/(4*np.pi))
     s.require_scales(L_dealias)
     s['g'] += amp*norm*r**𝓁*(1-r**2)*(np.cos(𝓁*phi)+np.sin(𝓁*phi))*np.sin(theta)**𝓁
-    s['g'] += 0.5*(1-r**2)
     logger.info("benchmark run with perturbations at ell={} with norm={}".format(𝓁, norm))
 else:
+    amp = 1e-5
     rng = np.random.default_rng(seed=42+rank)
     noise = de.field.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
     noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
@@ -212,35 +214,19 @@ int_test['g']=1
 int_test.require_scales(L_dealias)
 logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
 
-if rank == 0:
-    scalar_file = pathlib.Path('{:s}/scalar_output.h5'.format(data_dir)).absolute()
-    if os.path.exists(str(scalar_file)):
-        scalar_file.unlink()
-    scalar_f = h5py.File('{:s}'.format(str(scalar_file)), 'a')
-    parameter_group = scalar_f.create_group('parameters')
-    parameter_group['ConvectiveRossbySq'] = ConvectiveRossbySq
-    parameter_group['Ekman'] = Ekman
-    parameter_group['Prandtl'] = Prandtl
-    parameter_group['L'] = Lmax
-    parameter_group['N'] = Nmax
-    parameter_group['dt_max'] = float(args['--max_dt'])
-
-    scale_group = scalar_f.create_group('scales')
-    scale_group.create_dataset(name='sim_time', shape=(0,), maxshape=(None,), dtype=np.float64)
-    task_group = scalar_f.create_group('tasks')
-    scalar_keys = ['KE', 'PE', 'Re', 'Ro', 'Lz', 'E0']
-    for key in scalar_keys:
-        task_group.create_dataset(name=key, shape=(0,), maxshape=(None,), dtype=np.float64)
-    scalar_index = 0
-    scalar_f.close()
-    from collections import OrderedDict
-    scalar_data = OrderedDict()
-
-
 KE = 0.5*dot(u,u)
 ens = dot(curl(u),curl(u))
 Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
+
+traces = solver.evaluator.add_file_handler('traces', sim_dt=10, max_writes=np.inf)
+traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
+traces.add_task(integ(KE)/Ek**2, name='E0')
+traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
+traces.add_task(sqrt(integ(2*KE))/Ek/(4/3*np.pi), name='Re')
+traces.add_task(Co2*integ(Ts)/(4/3*np.pi), name='PE')
+traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
+
 
 report_cadence = 100
 energy_report_cadence = 100
@@ -253,7 +239,7 @@ good_solution = True
 while solver.ok and good_solution:
     if solver.iteration % energy_report_cadence == 0:
         KE_avg = vol_avg(KE.evaluate())
-        E0 = KE_avg/Ek**2
+        E0 = KE_avg/Ek**2*(4/3*np.pi) # volume integral, not average
 
         Ro = np.sqrt(vol_avg(ens.evaluate()))
 
@@ -265,23 +251,6 @@ while solver.ok and good_solution:
 
         logger.info("iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e}), KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek, KE_avg, E0, PE, Lz_avg))
         good_solution = np.isfinite(E0)
-
-        if rank == 0:
-            scalar_data['PE'] = PE
-            scalar_data['KE'] = KE_avg
-            scalar_data['Re'] = Re
-            scalar_data['Ro'] = Ro
-            scalar_data['Lz'] = Lz_avg
-            scalar_data['E0'] = E0
-
-            scalar_f = h5py.File('{:s}'.format(str(scalar_file)), 'a')
-            scalar_f['scales/sim_time'].resize(scalar_index+1, axis=0)
-            scalar_f['scales/sim_time'][scalar_index] = solver.sim_time
-            for key in scalar_data:
-                scalar_f['tasks/'+key].resize(scalar_index+1, axis=0)
-                scalar_f['tasks/'+key][scalar_index] = scalar_data[key]
-            scalar_index += 1
-            scalar_f.close()
 
     elif solver.iteration % report_cadence == 0:
         logger.info("iter: {:d}, dt={:e}, t={:e}".format(solver.iteration, dt, solver.sim_time))
