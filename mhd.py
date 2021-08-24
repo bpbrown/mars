@@ -1,14 +1,14 @@
 """
-Dedalus script for full sphere anelastic convection,
-applied to the Marti Boussinesq benchmark.
+Dedalus script for full sphere boussinesq mhd convection.
 
 Usage:
-    boussinesq_hydro.py [options]
+    mhd.py [options]
 
 Options:
     --Ekman=<Ekman>                      Ekman number    [default: 3e-4]
     --ConvectiveRossbySq=<Co2>           Squared Convective Rossby = Ra*Ek**2/Pr [default: 2.85e-2]
-    --Prandtl=<Prandtl>                  Prandtl number  [default: 1]
+    --Prandtl=<Pr>                       Prandtl number  [default: 1]
+    --MagneticPrandtl=<Pm>               Magnetic Prandtl number [default: 1]
 
     --L_max=<L_max>                      Max spherical harmonic [default: 30]
     --N_max=<N_max>                      Max radial polynomial  [default: 31]
@@ -80,18 +80,20 @@ radius = 1
 Ek = Ekman = float(args['--Ekman'])
 Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
 Pr = Prandtl = float(args['--Prandtl'])
-logger.info("Ek = {}, Co2 = {}, Pr = {}".format(Ek,Co2,Pr))
+Pm = MagneticPrandtl = float(args['--MagneticPrandtl'])
+
+logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}".format(Ek,Co2,Pr,Pm))
+
 # load balancing for real variables and parallel runs
 if Lmax % 2 == 1:
     nm = 2*(Lmax+1)
 else:
     nm = 2*(Lmax+2)
 
-L_dealias = 3/2
-N_dealias = 3/2
+dealias = L_dealias = N_dealias = 3/2
 
 data_dir = sys.argv[0].split('.py')[0]
-data_dir += '_Ek{}_Co{}_Pr{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'])
+data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
 data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
 if args['--benchmark']:
     data_dir += '_benchmark'
@@ -119,11 +121,14 @@ phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
 phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
 theta_target = thetag[0,(Lmax+1)//2,0]
 
-u = de.field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-p = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
-s = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
-τ_u = de.field.Field(dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
-τ_s = de.field.Field(dist=d, bases=(b_S2,), dtype=np.float64)
+u = de.field.Field(name="u", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+p = de.field.Field(name="p", dist=d, bases=(b,), dtype=np.float64)
+s = de.field.Field(name="s", dist=d, bases=(b,), dtype=np.float64)
+A = de.field.Field(name="A", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+φ = de.field.Field(name="φ", dist=d, bases=(b,), dtype=np.float64)
+τ_u = de.field.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
+τ_s = de.field.Field(name="τ_s", dist=d, bases=(b_S2,), dtype=np.float64)
+τ_A = de.field.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
 
 # Parameters and operators
 div = lambda A: de.operators.Divergence(A, index=0)
@@ -141,6 +146,9 @@ power = lambda A, B: de.operators.Power(A, B)
 LiftTau = lambda A, n: de.operators.LiftTau(A,b,n)
 integ = lambda A: de.operators.Integrate(A, c)
 sqrt = lambda A: de.operators.UnaryGridFunction(np.sqrt, A)
+
+ell_func = lambda ell: ell+1
+ellp1 = lambda A: de.operators.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
 ez = de.field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
@@ -165,22 +173,34 @@ source['g'] = 3
 e = grad(u) + trans(grad(u))
 e.store_last = True
 
-problem = problems.IVP([p, u,  τ_u, s,  τ_s])
+B = curl(A)
+J = curl(B)
+
+problem = problems.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
 problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
-                      - dot(u, e) - cross(ez_g, u)))
-problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + LiftTau(τ_s,-1),
-                     - dot(u, grad(s)) + Ek/Pr*source ))
+problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
+                      - dot(u, e) - cross(ez_g, u) + cross(J,B) ))
+problem.add_equation((ddt(s) - Ek/Pr*lap(s) + LiftTau(τ_s,-1),
+                      - dot(u, grad(s)) + Ek/Pr*source ))
+problem.add_equation((div(A), 0)) # coulomb gauge
+problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + LiftTau(τ_A,-1),
+                        cross(u, B) ))
 # Boundary conditions
 problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
 problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")
 problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
+problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
+problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+
 logger.info("Problem built")
 
+# Solver
+solver = solvers.InitialValueSolver(problem, timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
+
+# ICs
 s.require_scales(L_dealias)
 s['g'] = 0.5*(1-r**2) # static solution
-
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
@@ -199,8 +219,27 @@ else:
     s.require_scales(1)
     s['g'] += amp*noise['g']
 
-# Solver
-solver = solvers.InitialValueSolver(problem, timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
+B_IC = de.field.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+mag_amp = 1e-2
+B_IC.require_scales(dealias)
+B_IC['g'][2] = 0 # radial
+B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
+B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
+                             ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
+                             +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
+
+for i in range(3):
+    print(np.min(B_IC['g'][i]), np.max(B_IC['g'][i]))
+
+logger.info("set initial conditions for B")
+IC_problem = problems.LBVP([φ, A, τ_A])
+IC_problem.add_equation((div(A), 0))
+IC_problem.add_equation((curl(A) + grad(φ), B_IC))
+IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
+IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+IC_solver = solvers.LinearBoundaryValueSolver(IC_problem)
+IC_solver.solve()
+logger.info("solved for initial conditions for A")
 
 def vol_avg(q):
     Q = integ(q/(4/3*np.pi)).evaluate()['g']
