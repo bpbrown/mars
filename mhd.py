@@ -19,6 +19,7 @@ Options:
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
     --safety=<safety>                    CFL safety factor [default: 0.4]
+    --fixed_dt                           Fix timestep size
 
     --run_time_diffusion=<run_time_d>    How long to run, in diffusion times [default: 20]
     --run_time_rotation=<run_time_rot>   How long to run, in rotation timescale; overrides run_time_diffusion if set
@@ -299,11 +300,14 @@ traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
 report_cadence = 100
 energy_report_cadence = 100
 max_dt = float(args['--max_dt'])
-dt = max_dt/10
+if args['--fixed_dt']:
+    dt = max_dt
+else:
+    dt = max_dt/10
+cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
 hermitian_cadence = 100
-
-CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=0.2, max_dt=max_dt, threshold=0.1)
+CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 CFL.add_velocity(B)
 
@@ -312,7 +316,8 @@ logger.info("avg div A: {}".format(vol_avg(div(A).evaluate())))
 main_start = time.time()
 good_solution = True
 while solver.ok and good_solution:
-    dt = CFL.compute_dt()
+    if not args['--fixed_dt']:
+        dt = CFL.compute_dt()
     if solver.iteration % energy_report_cadence == 0:
         KE_avg = vol_avg(KE.evaluate())
         E0 = KE_avg/Ek**2*(4/3*np.pi) # volume integral, not average

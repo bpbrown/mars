@@ -19,6 +19,7 @@ Options:
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
     --safety=<safety>                    CFL safety factor [default: 0.4]
+    --fixed_dt                           Fix dt
 
     --run_time_diffusion=<run_time_d>    How long to run, in diffusion times [default: 20]
     --run_time_rotation=<run_time_rot>   How long to run, in rotation timescale; overrides run_time_diffusion if set
@@ -78,6 +79,7 @@ print(os.path.join(data_dir,'logs/dedalus_log'))
 
 import dedalus.public as de
 from dedalus.core import timesteppers, operators
+from dedalus.extras import flow_tools
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -235,13 +237,23 @@ traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
 
 report_cadence = 100
 energy_report_cadence = 100
-dt = float(args['--max_dt'])
+max_dt = float(args['--max_dt'])
+if args['--fixed_dt']:
+    dt = max_dt
+else:
+    dt = max_dt/10
+cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
 hermitian_cadence = 100
+CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
+CFL.add_velocity(u)
 
 main_start = time.time()
 good_solution = True
 while solver.ok and good_solution:
+    if not args['--fixed_dt']:
+        dt = CFL.compute_dt()
+
     if solver.iteration % energy_report_cadence == 0:
         KE_avg = vol_avg(KE.evaluate())
         E0 = KE_avg/Ek**2*(4/3*np.pi) # volume integral, not average
@@ -254,11 +266,10 @@ while solver.ok and good_solution:
 
         Lz_avg = vol_avg(Lz.evaluate())
 
-        logger.info("iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e}), KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek, KE_avg, E0, PE, Lz_avg))
+        log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
+        log_string += ", KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(KE_avg, E0, PE, Lz_avg)
+        logger.info(log_string)
         good_solution = np.isfinite(E0)
-
-    elif solver.iteration % report_cadence == 0:
-        logger.info("iter: {:d}, dt={:e}, t={:e}".format(solver.iteration, dt, solver.sim_time))
     if solver.iteration % hermitian_cadence in timestepper_history:
         for field in solver.state:
             field['g']
