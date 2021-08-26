@@ -55,6 +55,8 @@ import logging
 logger = logging.getLogger(__name__)
 dlog = logging.getLogger('matplotlib')
 dlog.setLevel(logging.WARNING)
+dlog = logging.getLogger('evaluator')
+dlog.setLevel(logging.WARNING)
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
