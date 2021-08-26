@@ -36,10 +36,6 @@ Options:
     --debug                              Produce debugging output for NCCs
 """
 import numpy as np
-import dedalus.public as de
-from dedalus.core import timesteppers, operators
-from dedalus.tools.parallel import Sync
-
 from mpi4py import MPI
 import time
 
@@ -48,6 +44,7 @@ import os
 import sys
 import h5py
 
+from dedalus.tools.parallel import Sync
 from docopt import docopt
 args = docopt(__doc__)
 
@@ -57,6 +54,30 @@ dlog = logging.getLogger('matplotlib')
 dlog.setLevel(logging.WARNING)
 dlog = logging.getLogger('evaluator')
 dlog.setLevel(logging.WARNING)
+
+data_dir = './'+sys.argv[0].split('.py')[0]
+data_dir += '_Ek{}_Co{}_Pr{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'])
+data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
+if args['--benchmark']:
+    data_dir += '_benchmark'
+if args['--label']:
+    data_dir += '_{:s}'.format(args['--label'])
+logger.info("saving data in {}".format(data_dir))
+from dedalus.tools.config import config
+config['logging']['filename'] = os.path.join(data_dir,'logs/dedalus_log')
+config['logging']['file_level'] = 'DEBUG'
+with Sync() as sync:
+    if sync.comm.rank == 0:
+        if not os.path.exists('{:s}/'.format(data_dir)):
+            os.mkdir('{:s}/'.format(data_dir))
+        logdir = os.path.join(data_dir,'logs')
+        if not os.path.exists(logdir):
+            os.mkdir(logdir)
+print(os.path.join(data_dir,'logs/dedalus_log'))
+
+
+import dedalus.public as de
+from dedalus.core import timesteppers, operators
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -91,24 +112,7 @@ else:
 L_dealias = 3/2
 N_dealias = 3/2
 
-data_dir = sys.argv[0].split('.py')[0]
-data_dir += '_Ek{}_Co{}_Pr{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'])
-data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
-if args['--benchmark']:
-    data_dir += '_benchmark'
-if args['--label']:
-    data_dir += '_{:s}'.format(args['--label'])
-logger.info("saving data in {}".format(data_dir))
-from dedalus.tools.config import config
-config['logging']['filename'] = os.path.join(data_dir,'logs/dedalus_log')
-config['logging']['file_level'] = 'DEBUG'
-with Sync() as sync:
-    if sync.comm.rank == 0:
-        if not os.path.exists('{:s}/'.format(data_dir)):
-            os.mkdir('{:s}/'.format(data_dir))
-        logdir = os.path.join(data_dir,'logs')
-        if not os.path.exists(logdir):
-            os.mkdir(logdir)
+
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
@@ -220,7 +224,7 @@ ens = dot(curl(u),curl(u))
 Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
 
-traces = solver.evaluator.add_file_handler('traces', sim_dt=10, max_writes=np.inf)
+traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
 traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
 traces.add_task(integ(KE)/Ek**2, name='E0')
 traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
