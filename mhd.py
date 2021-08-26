@@ -37,8 +37,7 @@ Options:
 """
 import numpy as np
 import dedalus.public as de
-from dedalus.core import arithmetic, timesteppers, problems, solvers
-from dedalus.extras.flow_tools import GlobalArrayReducer
+from dedalus.core import operators, timesteppers
 from dedalus.tools.parallel import Sync
 
 from mpi4py import MPI
@@ -112,62 +111,62 @@ with Sync() as sync:
             os.mkdir(logdir)
 
 start_time = time.time()
-c = de.coords.SphericalCoordinates('phi', 'theta', 'r')
-d = de.distributor.Distributor((c,), mesh=mesh)
-b = de.basis.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+c = de.SphericalCoordinates('phi', 'theta', 'r')
+d = de.Distributor((c,), mesh=mesh)
+b = de.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 b_S2 = b.S2_basis()
 phi1, theta1, r1 = b.local_grids((1,1,1))
 phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
 phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
 theta_target = thetag[0,(Lmax+1)//2,0]
 
-u = de.field.Field(name="u", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-p = de.field.Field(name="p", dist=d, bases=(b,), dtype=np.float64)
-s = de.field.Field(name="s", dist=d, bases=(b,), dtype=np.float64)
-A = de.field.Field(name="A", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-φ = de.field.Field(name="φ", dist=d, bases=(b,), dtype=np.float64)
-τ_u = de.field.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
-τ_s = de.field.Field(name="τ_s", dist=d, bases=(b_S2,), dtype=np.float64)
-τ_A = de.field.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
+u = de.Field(name="u", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+p = de.Field(name="p", dist=d, bases=(b,), dtype=np.float64)
+s = de.Field(name="s", dist=d, bases=(b,), dtype=np.float64)
+A = de.Field(name="A", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+φ = de.Field(name="φ", dist=d, bases=(b,), dtype=np.float64)
+τ_u = de.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
+τ_s = de.Field(name="τ_s", dist=d, bases=(b_S2,), dtype=np.float64)
+τ_A = de.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
 
 # Parameters and operators
-div = lambda A: de.operators.Divergence(A, index=0)
-lap = lambda A: de.operators.Laplacian(A, c)
-grad = lambda A: de.operators.Gradient(A, c)
-curl = lambda A: de.operators.Curl(A)
-dot = lambda A, B: arithmetic.DotProduct(A, B)
-cross = lambda A, B: arithmetic.CrossProduct(A, B)
-ddt = lambda A: de.operators.TimeDerivative(A)
-trans = lambda A: de.operators.TransposeComponents(A)
-radial = lambda A: de.operators.RadialComponent(A)
-angular = lambda A: de.operators.AngularComponent(A, index=1)
-trace = lambda A: de.operators.Trace(A)
-power = lambda A, B: de.operators.Power(A, B)
-LiftTau = lambda A, n: de.operators.LiftTau(A,b,n)
-integ = lambda A: de.operators.Integrate(A, c)
-sqrt = lambda A: de.operators.UnaryGridFunction(np.sqrt, A)
+div = lambda A: de.Divergence(A, index=0)
+lap = lambda A: de.Laplacian(A, c)
+grad = lambda A: de.Gradient(A, c)
+curl = lambda A: de.Curl(A)
+dot = lambda A, B: de.DotProduct(A, B)
+cross = lambda A, B: de.CrossProduct(A, B)
+ddt = lambda A: de.TimeDerivative(A)
+trans = lambda A: de.TransposeComponents(A)
+radial = lambda A: de.RadialComponent(A)
+angular = lambda A: de.AngularComponent(A, index=1)
+trace = lambda A: de.Trace(A)
+power = lambda A, B: de.Power(A, B)
+LiftTau = lambda A, n: de.LiftTau(A,b,n)
+integ = lambda A: de.Integrate(A, c)
+sqrt = lambda A: de.UnaryGridFunction(np.sqrt, A)
 
 ell_func = lambda ell: ell+1
-ellp1 = lambda A: de.operators.SphericalEllProduct(A, c, ell_func)
+ellp1 = lambda A: operators.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
-ez = de.field.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
 ez.set_scales(b.dealias)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-ez_g = de.operators.Grid(ez).evaluate()
+ez_g = de.Grid(ez).evaluate()
 
-T = de.field.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
+T = de.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
 
 T['g'] = 0.5*(1-r1**2)
 
-r_vec = de.field.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
+r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
 #r_vec_g = de.operators.Grid(r_vec).evaluate()
 
 # Entropy source function, inspired from MESA model
-source = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
+source = de.Field(dist=d, bases=(b,), dtype=np.float64)
 source['g'] = 3
 
 e = grad(u) + trans(grad(u))
@@ -176,7 +175,7 @@ e.store_last = True
 B = curl(A)
 J = curl(B)
 
-problem = problems.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
+problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
 problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
                       - dot(u, e) - cross(ez_g, u) + cross(J,B) ))
@@ -196,7 +195,7 @@ problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
 logger.info("Problem built")
 
 # Solver
-solver = solvers.InitialValueSolver(problem, timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
+solver = problem.build_solver(timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
 s.require_scales(L_dealias)
@@ -211,7 +210,7 @@ if args['--benchmark']:
 else:
     amp = 1e-5
     rng = np.random.default_rng(seed=42+rank)
-    noise = de.field.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
+    noise = de.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
     noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
     noise.require_scales(0.25)
     noise['g']
@@ -219,7 +218,7 @@ else:
     s.require_scales(1)
     s['g'] += amp*noise['g']
 
-B_IC = de.field.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
 mag_amp = 1e-2
 B_IC.require_scales(dealias)
 B_IC['g'][2] = 0 # radial
@@ -232,12 +231,12 @@ for i in range(3):
     print(np.min(B_IC['g'][i]), np.max(B_IC['g'][i]))
 
 logger.info("set initial conditions for B")
-IC_problem = problems.LBVP([φ, A, τ_A])
+IC_problem = de.LBVP([φ, A, τ_A])
 IC_problem.add_equation((div(A), 0))
-IC_problem.add_equation((curl(A) + grad(φ), B_IC))
+IC_problem.add_equation((curl(A) + grad(φ) + LiftTau(τ_A, -1), B_IC))
 IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
 IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
-IC_solver = solvers.LinearBoundaryValueSolver(IC_problem)
+IC_solver = IC_problem.build_solver()
 IC_solver.solve()
 logger.info("solved for initial conditions for A")
 
@@ -248,7 +247,7 @@ def vol_avg(q):
     else:
         return 0
 
-int_test = de.field.Field(dist=d, bases=(b,), dtype=np.float64)
+int_test = de.Field(dist=d, bases=(b,), dtype=np.float64)
 int_test['g']=1
 int_test.require_scales(L_dealias)
 logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
