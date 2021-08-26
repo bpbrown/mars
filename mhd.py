@@ -37,7 +37,6 @@ Options:
 """
 import numpy as np
 from dedalus.tools.parallel import Sync
-
 from mpi4py import MPI
 import time
 
@@ -77,6 +76,7 @@ with Sync() as sync:
 
 import dedalus.public as de
 from dedalus.core import operators, timesteppers
+from dedalus.extras import flow_tools
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -222,16 +222,13 @@ else:
     s['g'] += amp*noise['g']
 
 B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-mag_amp = 1e-2
+mag_amp = 1e-4
 B_IC.require_scales(dealias)
 B_IC['g'][2] = 0 # radial
 B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
 B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
                              ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
                              +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
-
-for i in range(3):
-    print(np.min(B_IC['g'][i]), np.max(B_IC['g'][i]))
 
 invert_B_to_A = False
 
@@ -246,6 +243,7 @@ if invert_B_to_A:
     IC_solver.solve()
     logger.info("solved for initial conditions for A")
 else:
+    # Marti convective dynamo benchmark values
     A_analytic_2 = (3/2*r**2*(1-4*r**2+6*r**4-3*r**6)
                        *np.sin(theta)*(np.sin(phi)-np.cos(phi))
                    +3/8*r**3*(2-7*r**2+9*r**4-4*r**6)
@@ -266,9 +264,9 @@ else:
                        *(np.cos(phi)+np.sin(phi)))
 
     A.require_scales(dealias)
-    A['g'][0] = A_analytic_0
-    A['g'][1] = A_analytic_1
-    A['g'][2] = A_analytic_2
+    A['g'][0] = mag_amp*A_analytic_0
+    A['g'][1] = mag_amp*A_analytic_1
+    A['g'][2] = mag_amp*A_analytic_2
 
 def vol_avg(q):
     Q = integ(q/(4/3*np.pi)).evaluate()['g']
@@ -286,9 +284,11 @@ KE = 0.5*dot(u,u)
 ens = dot(curl(u),curl(u))
 Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
+ME = 0.5*dot(B,B)
 
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
 traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
+traces.add_task(integ(ME)/(4/3*np.pi), name='ME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
 traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
 traces.add_task(sqrt(integ(2*KE))/Ek/(4/3*np.pi), name='Re')
@@ -298,13 +298,21 @@ traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
 
 report_cadence = 100
 energy_report_cadence = 100
-dt = float(args['--max_dt'])
+max_dt = float(args['--max_dt'])
+dt = max_dt/10
 timestepper_history = [0,1]
 hermitian_cadence = 100
+
+CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=0.2, max_dt=max_dt, threshold=0.1)
+CFL.add_velocity(u)
+CFL.add_velocity(B)
+
+logger.info("avg div A: {}".format(vol_avg(div(A).evaluate())))
 
 main_start = time.time()
 good_solution = True
 while solver.ok and good_solution:
+    dt = CFL.compute_dt()
     if solver.iteration % energy_report_cadence == 0:
         KE_avg = vol_avg(KE.evaluate())
         E0 = KE_avg/Ek**2*(4/3*np.pi) # volume integral, not average
@@ -317,11 +325,13 @@ while solver.ok and good_solution:
 
         Lz_avg = vol_avg(Lz.evaluate())
 
-        logger.info("iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e}), KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek, KE_avg, E0, PE, Lz_avg))
-        good_solution = np.isfinite(E0)
+        ME_avg = vol_avg(ME.evaluate())
 
-    elif solver.iteration % report_cadence == 0:
-        logger.info("iter: {:d}, dt={:e}, t={:e}".format(solver.iteration, dt, solver.sim_time))
+        log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
+        log_string += ", KE={:.2e} ({:.4e}), ME={:.2e}, PE={:.2e}, Lz={:.2e}".format(KE_avg, E0, ME_avg, PE, Lz_avg)
+        logger.info(log_string)
+
+        good_solution = np.isfinite(E0)
     if solver.iteration % hermitian_cadence in timestepper_history:
         for field in solver.state:
             field['g']
