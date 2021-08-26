@@ -36,8 +36,6 @@ Options:
     --debug                              Produce debugging output for NCCs
 """
 import numpy as np
-import dedalus.public as de
-from dedalus.core import operators, timesteppers
 from dedalus.tools.parallel import Sync
 
 from mpi4py import MPI
@@ -57,6 +55,28 @@ dlog = logging.getLogger('matplotlib')
 dlog.setLevel(logging.WARNING)
 dlog = logging.getLogger('evaluator')
 dlog.setLevel(logging.WARNING)
+
+data_dir = sys.argv[0].split('.py')[0]
+data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
+data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
+if args['--benchmark']:
+    data_dir += '_benchmark'
+if args['--label']:
+    data_dir += '_{:s}'.format(args['--label'])
+logger.info("saving data in {}".format(data_dir))
+from dedalus.tools.config import config
+config['logging']['filename'] = os.path.join(data_dir,'logs/dedalus_log')
+config['logging']['file_level'] = 'DEBUG'
+with Sync() as sync:
+    if sync.comm.rank == 0:
+        if not os.path.exists('{:s}/'.format(data_dir)):
+            os.mkdir('{:s}/'.format(data_dir))
+        logdir = os.path.join(data_dir,'logs')
+        if not os.path.exists(logdir):
+            os.mkdir(logdir)
+
+import dedalus.public as de
+from dedalus.core import operators, timesteppers
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -93,25 +113,6 @@ else:
 
 dealias = L_dealias = N_dealias = 3/2
 
-data_dir = sys.argv[0].split('.py')[0]
-data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
-data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
-if args['--benchmark']:
-    data_dir += '_benchmark'
-if args['--label']:
-    data_dir += '_{:s}'.format(args['--label'])
-logger.info("saving data in {}".format(data_dir))
-from dedalus.tools.config import config
-config['logging']['filename'] = os.path.join(data_dir,'logs/dedalus_log')
-config['logging']['file_level'] = 'DEBUG'
-with Sync() as sync:
-    if sync.comm.rank == 0:
-        if not os.path.exists('{:s}/'.format(data_dir)):
-            os.mkdir('{:s}/'.format(data_dir))
-        logdir = os.path.join(data_dir,'logs')
-        if not os.path.exists(logdir):
-            os.mkdir(logdir)
-
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh)
@@ -146,7 +147,7 @@ trace = lambda A: de.Trace(A)
 power = lambda A, B: de.Power(A, B)
 LiftTau = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
-sqrt = lambda A: de.UnaryGridFunction(np.sqrt, A)
+sqrt = lambda A: operators.UnaryGridFunction(np.sqrt, A)
 
 ell_func = lambda ell: ell+1
 ellp1 = lambda A: operators.SphericalEllProduct(A, c, ell_func)
@@ -232,15 +233,42 @@ B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
 for i in range(3):
     print(np.min(B_IC['g'][i]), np.max(B_IC['g'][i]))
 
-logger.info("set initial conditions for B")
-IC_problem = de.LBVP([φ, A, τ_A])
-IC_problem.add_equation((div(A), 0))
-IC_problem.add_equation((curl(A) + grad(φ) + LiftTau(τ_A, -1), B_IC))
-IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
-IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
-IC_solver = IC_problem.build_solver()
-IC_solver.solve()
-logger.info("solved for initial conditions for A")
+invert_B_to_A = False
+
+if invert_B_to_A:
+    logger.info("set initial conditions for B")
+    IC_problem = de.LBVP([φ, A, τ_A])
+    IC_problem.add_equation((div(A), 0))
+    IC_problem.add_equation((curl(A) + grad(φ) + LiftTau(τ_A, -1), B_IC))
+    IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
+    IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+    IC_solver = IC_problem.build_solver()
+    IC_solver.solve()
+    logger.info("solved for initial conditions for A")
+else:
+    A_analytic_2 = (3/2*r**2*(1-4*r**2+6*r**4-3*r**6)
+                       *np.sin(theta)*(np.sin(phi)-np.cos(phi))
+                   +3/8*r**3*(2-7*r**2+9*r**4-4*r**6)
+                       *(3*np.cos(theta)**2-1)
+                   +9/160*r**2*(-200/21*r+980/27*r**3-540/11*r**5+880/39*r**7)
+                         *(3*np.cos(theta)**2-1)
+                   +9/80*r*(1-100/21*r**2+245/27*r**4-90/11*r**6+110/39*r**8)
+                        *(3*np.cos(theta)**2-1)
+                   +1/8*r*(-48/5*r+288/7*r**3-64*r**5+360/11*r**7)
+                       *np.sin(theta)*(np.sin(phi)-np.cos(phi))
+                   +1/8*(1-24/5*r**2+72/7*r**4-32/3*r**6+45/11*r**8)
+                       *np.sin(theta)*(np.sin(phi)-np.cos(phi)))
+    A_analytic_1 = (-27/80*r*(1-100/21*r**2+245/27*r**4-90/11*r**6+110/39*r**8)
+                            *np.cos(theta)*np.sin(theta)
+                    +1/8*(1-24/5*r**2+72/7*r**4-32/3*r**6+45/11*r**8)
+                        *np.cos(theta)*(np.sin(phi)-np.cos(phi)))
+    A_analytic_0 = (1/8*(1-24/5*r**2+72/7*r**4-32/3*r**6+45/11*r**8)
+                       *(np.cos(phi)+np.sin(phi)))
+
+    A.require_scales(dealias)
+    A['g'][0] = A_analytic_0
+    A['g'][1] = A_analytic_1
+    A['g'][2] = A_analytic_2
 
 def vol_avg(q):
     Q = integ(q/(4/3*np.pi)).evaluate()['g']
@@ -259,7 +287,7 @@ ens = dot(curl(u),curl(u))
 Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
 
-traces = solver.evaluator.add_file_handler('traces', sim_dt=10, max_writes=np.inf)
+traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
 traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
 traces.add_task(integ(KE)/Ek**2, name='E0')
 traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
