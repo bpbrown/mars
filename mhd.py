@@ -55,6 +55,9 @@ dlog = logging.getLogger('matplotlib')
 dlog.setLevel(logging.WARNING)
 dlog = logging.getLogger('evaluator')
 dlog.setLevel(logging.WARNING)
+# suppress azimuthal mode warnings for float64 optimal distribution
+dlog = logging.getLogger('basis')
+dlog.setLevel(logging.ERROR)
 
 data_dir = sys.argv[0].split('.py')[0]
 data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
@@ -222,18 +225,17 @@ else:
     s.require_scales(1)
     s['g'] += amp*noise['g']
 
-B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+
 mag_amp = 1e-4
-B_IC.require_scales(dealias)
-B_IC['g'][2] = 0 # radial
-B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
-B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
-                             ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
-                             +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
-
 invert_B_to_A = False
-
 if invert_B_to_A:
+    B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+    B_IC.require_scales(dealias)
+    B_IC['g'][2] = 0 # radial
+    B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
+    B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
+                                 ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
+                                 +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
     logger.info("set initial conditions for B")
     IC_problem = de.LBVP([φ, A, τ_A])
     IC_problem.add_equation((div(A), 0))
@@ -269,6 +271,7 @@ else:
     A['g'][1] = mag_amp*A_analytic_1
     A['g'][2] = mag_amp*A_analytic_2
 
+
 def vol_avg(q):
     Q = integ(q/(4/3*np.pi)).evaluate()['g']
     if rank == 0:
@@ -281,13 +284,25 @@ int_test['g']=1
 int_test.require_scales(L_dealias)
 logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
 
+# Outputs
+max_dt = float(args['--max_dt'])
+if args['--fixed_dt']:
+    dt = max_dt
+else:
+    dt = max_dt/10
+if not args['--restart']:
+    mode = 'overwrite'
+else:
+    write, dt = solver.load_state(args['--restart'])
+    mode = 'append'
+
 KE = 0.5*dot(u,u)
 ens = dot(curl(u),curl(u))
 Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
 ME = 0.5*dot(B,B)
 
-traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
+traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf, virtual_file=True, mode=mode)
 traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
 traces.add_task(integ(ME)/(4/3*np.pi), name='ME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
@@ -297,13 +312,14 @@ traces.add_task(Co2*integ(Ts)/(4/3*np.pi), name='PE')
 traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
 
 
+
+# Analysis
+slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 100, max_writes = 10, virtual_file=True, mode=mode)
+slices.add_task(s(theta=np.pi/2), name='s')
+
+
 report_cadence = 100
 energy_report_cadence = 100
-max_dt = float(args['--max_dt'])
-if args['--fixed_dt']:
-    dt = max_dt
-else:
-    dt = max_dt/10
 cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
 hermitian_cadence = 100
