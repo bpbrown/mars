@@ -79,7 +79,7 @@ with Sync() as sync:
             os.mkdir(logdir)
 
 import dedalus.public as de
-from dedalus.core import operators, timesteppers
+from dedalus.core import operators
 from dedalus.extras import flow_tools
 
 comm = MPI.COMM_WORLD
@@ -119,22 +119,21 @@ dealias = L_dealias = N_dealias = 3/2
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
-d = de.Distributor((c,), mesh=mesh)
-b = de.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
+b = de.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias))
 b_S2 = b.S2_basis()
 phi1, theta1, r1 = b.local_grids((1,1,1))
 phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
 phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
-theta_target = thetag[0,(Lmax+1)//2,0]
 
-u = de.Field(name="u", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-p = de.Field(name="p", dist=d, bases=(b,), dtype=np.float64)
-s = de.Field(name="s", dist=d, bases=(b,), dtype=np.float64)
-A = de.Field(name="A", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-φ = de.Field(name="φ", dist=d, bases=(b,), dtype=np.float64)
-τ_u = de.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
-τ_s = de.Field(name="τ_s", dist=d, bases=(b_S2,), dtype=np.float64)
-τ_A = de.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
+u = de.Field(name="u", dist=d, bases=(b,), tensorsig=(c,))
+p = de.Field(name="p", dist=d, bases=(b,))
+s = de.Field(name="s", dist=d, bases=(b,))
+A = de.Field(name="A", dist=d, bases=(b,), tensorsig=(c,))
+φ = de.Field(name="φ", dist=d, bases=(b,))
+τ_u = de.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,))
+τ_s = de.Field(name="τ_s", dist=d, bases=(b_S2,))
+τ_A = de.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,))
 
 # Parameters and operators
 div = lambda A: de.Divergence(A, index=0)
@@ -157,23 +156,25 @@ ell_func = lambda ell: ell+1
 ellp1 = lambda A: operators.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
-ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+ez = de.Field(dist=d, bases=(b,), tensorsig=(c,))
 ez.set_scales(b.dealias)
+logger.info('ping.')
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
+logger.info('ping..')
 ez_g = de.Grid(ez).evaluate()
-
-T = de.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
+logger.info('ping...')
+T = de.Field(dist=d, bases=(b.radial_basis,))
 
 T['g'] = 0.5*(1-r1**2)
 
-r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
+r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,))
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
 #r_vec_g = de.operators.Grid(r_vec).evaluate()
 
 # Entropy source function, inspired from MESA model
-source = de.Field(dist=d, bases=(b,), dtype=np.float64)
+source = de.Field(dist=d, bases=(b,))
 source['g'] = 3
 
 e = grad(u) + trans(grad(u))
@@ -202,7 +203,7 @@ problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
 logger.info("Problem built")
 
 # Solver
-solver = problem.build_solver(timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
+solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
 s.require_scales(L_dealias)
@@ -217,7 +218,7 @@ if args['--benchmark']:
 else:
     amp = 1e-5
     rng = np.random.default_rng(seed=42+rank)
-    noise = de.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
+    noise = de.Field(name='noise', dist=d, bases=(b,))
     noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
     noise.require_scales(0.25)
     noise['g']
@@ -229,7 +230,7 @@ else:
 mag_amp = 1e-4
 invert_B_to_A = False
 if invert_B_to_A:
-    B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+    B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,))
     B_IC.require_scales(dealias)
     B_IC['g'][2] = 0 # radial
     B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
@@ -279,7 +280,7 @@ def vol_avg(q):
     else:
         return 0
 
-int_test = de.Field(dist=d, bases=(b,), dtype=np.float64)
+int_test = de.Field(dist=d, bases=(b,))
 int_test['g']=1
 int_test.require_scales(L_dealias)
 logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
@@ -314,7 +315,7 @@ traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
 
 
 # Analysis
-slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 100, max_writes = 10, virtual_file=True, mode=mode)
+slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
 
 
@@ -326,6 +327,11 @@ hermitian_cadence = 100
 CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 CFL.add_velocity(B)
+
+if args['--run_time_rotation']:
+    solver.stop_sim_time = float(args['--run_time_rotation'])
+else:
+    solver.stop_sim_time = float(args['--run_time_diffusion'])/Ek
 
 logger.info("avg div A: {}".format(vol_avg(div(A).evaluate())))
 
