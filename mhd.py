@@ -10,8 +10,8 @@ Options:
     --Prandtl=<Pr>                       Prandtl number  [default: 1]
     --MagneticPrandtl=<Pm>               Magnetic Prandtl number [default: 1]
 
-    --L_max=<L_max>                      Max spherical harmonic [default: 30]
-    --N_max=<N_max>                      Max radial polynomial  [default: 31]
+    --Ntheta=<Ntheta>                    Latitudinal modes [default: 32]
+    --Nr=<Nr>                            Radial modes [default: 32]
     --mesh=<mesh>                        Processor mesh for 3-D runs; if not set a sensible guess will be made
 
     --benchmark                          Use benchmark initial conditions
@@ -61,7 +61,7 @@ dlog.setLevel(logging.ERROR)
 
 data_dir = sys.argv[0].split('.py')[0]
 data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
-data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
+data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
 if args['--benchmark']:
     data_dir += '_benchmark'
 if args['--label']:
@@ -96,8 +96,10 @@ else:
         mesh = [int(2**np.ceil(log2/2)),int(2**np.floor(log2/2))]
 logger.info("running on processor mesh={}".format(mesh))
 
-Lmax = int(args['--L_max'])
-Nmax = int(args['--N_max'])
+Nθ = int(args['--Ntheta'])
+Nr = int(args['--Nr'])
+Nφ = Nθ*2
+
 ncc_cutoff = float(args['--ncc_cutoff'])
 
 radius = 1
@@ -109,18 +111,12 @@ Pm = MagneticPrandtl = float(args['--MagneticPrandtl'])
 
 logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}".format(Ek,Co2,Pr,Pm))
 
-# load balancing for real variables and parallel runs
-if Lmax % 2 == 1:
-    nm = 2*(Lmax+1)
-else:
-    nm = 2*(Lmax+2)
-
 dealias = L_dealias = N_dealias = 3/2
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
-b = de.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias))
+b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 b_S2 = b.S2_basis()
 phi1, theta1, r1 = b.local_grids((1,1,1))
 phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
@@ -148,7 +144,7 @@ radial = lambda A: de.RadialComponent(A)
 angular = lambda A: de.AngularComponent(A, index=1)
 trace = lambda A: de.Trace(A)
 power = lambda A, B: de.Power(A, B)
-LiftTau = lambda A, n: de.LiftTau(A,b,n)
+Lift = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
 sqrt = lambda A: operators.UnaryGridFunction(np.sqrt, A)
 
@@ -158,15 +154,9 @@ ellp1 = lambda A: operators.SphericalEllProduct(A, c, ell_func)
 # NCCs and variables of the problem
 ez = de.Field(dist=d, bases=(b,), tensorsig=(c,))
 ez.set_scales(b.dealias)
-logger.info('ping.')
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-logger.info('ping..')
 ez_g = de.Grid(ez).evaluate()
-logger.info('ping...')
-T = de.Field(dist=d, bases=(b.radial_basis,))
-
-T['g'] = 0.5*(1-r1**2)
 
 r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,))
 r_vec.set_scales(b.dealias)
@@ -185,12 +175,12 @@ J = curl(B)
 
 problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
 problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
+problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u,-1),
                       - dot(u, e) - cross(ez_g, u) + cross(J,B) ))
-problem.add_equation((ddt(s) - Ek/Pr*lap(s) + LiftTau(τ_s,-1),
+problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s,-1),
                       - dot(u, grad(s)) + Ek/Pr*source ))
 problem.add_equation((div(A), 0)) # coulomb gauge
-problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + LiftTau(τ_A,-1),
+problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A,-1),
                         cross(u, B) ))
 # Boundary conditions
 problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
@@ -298,10 +288,11 @@ else:
     mode = 'append'
 
 KE = 0.5*dot(u,u)
+PE = Co2*s
 ens = dot(curl(u),curl(u))
-Ts = T*s
 Lz = dot(cross(r_vec,u), ez)
 ME = 0.5*dot(B,B)
+enstrophy = dot(curl(u),curl(u))
 
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf, virtual_file=True, mode=mode)
 traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
@@ -309,14 +300,13 @@ traces.add_task(integ(ME)/(4/3*np.pi), name='ME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
 traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
 traces.add_task(sqrt(integ(2*KE))/Ek/(4/3*np.pi), name='Re')
-traces.add_task(Co2*integ(Ts)/(4/3*np.pi), name='PE')
+traces.add_task(integ(PE)/(4/3*np.pi), name='PE')
 traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
-
-
 
 # Analysis
 slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
+slices.add_task(enstrophy, name='enstrophy')
 
 
 report_cadence = 100
@@ -348,14 +338,14 @@ while solver.ok and good_solution:
 
         Re = np.sqrt(2*vol_avg(KE.evaluate()))/Ek
 
-        PE = Co2*vol_avg(Ts.evaluate())
+        PE_avg = vol_avg(PE.evaluate())
 
         Lz_avg = vol_avg(Lz.evaluate())
 
         ME_avg = vol_avg(ME.evaluate())
 
         log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
-        log_string += ", KE={:.2e} ({:.4e}), ME={:.2e}, PE={:.2e}, Lz={:.2e}".format(KE_avg, E0, ME_avg, PE, Lz_avg)
+        log_string += ", KE={:.2e} ({:.4e}), ME={:.2e}, PE={:.2e}, Lz={:.2e}".format(KE_avg, E0, ME_avg, PE_avg, Lz_avg)
         logger.info(log_string)
 
         good_solution = np.isfinite(E0)
@@ -368,7 +358,7 @@ end_time = time.time()
 
 startup_time = main_start - start_time
 main_loop_time = end_time - main_start
-DOF = nm*(Lmax+1)*(Nmax+1)
+DOF = Nφ*Nθ*Nr
 niter = solver.iteration
 if rank==0:
     print('performance metrics:')
