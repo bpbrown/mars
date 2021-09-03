@@ -297,16 +297,18 @@ slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_
 slices.add_task(s(theta=np.pi/2), name='s')
 slices.add_task(enstrophy, name='enstrophy')
 
-report_cadence = np.inf #100
-# flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
-# flow.add_property(np.sqrt(avg(KE)*2)/Ek, name='Re')
-# flow.add_property(KE, name='KE')
-# flow.add_property(ME, name='ME')
-# flow.add_property(PE, name='PE')
-# flow.add_property(Lz, name='Lz')
-# flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
-# flow.add_property(np.abs(τ_s), name='|τ_s|')
-# flow.add_property(np.sqrt(dot(τ_A,τ_A)), name='|τ_A|')
+report_cadence = 100
+flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
+flow.add_property(np.sqrt(avg(KE)*2)/Ek, name='Re')
+flow.add_property(np.sqrt(avg(ens)), name='Ro')
+flow.add_property(KE, name='KE')
+flow.add_property(0.5*dot(B,B), name='ME') #this works
+#flow.add_property(ME, name='ME') #something's wrong with ME, but B.B works
+flow.add_property(PE, name='PE')
+flow.add_property(Lz, name='Lz')
+flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
+flow.add_property(np.abs(τ_s), name='|τ_s|')
+flow.add_property(np.sqrt(dot(τ_A,τ_A)), name='|τ_A|')
 
 cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
@@ -328,23 +330,23 @@ while solver.proceed and good_solution:
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
-        KE_avg = flow.volume_average('KE')
+        KE_avg = flow.grid_average('KE') # volume average needs a defined volume
         E0 = KE_avg/Ek**2
-        ME_avg = flow.volume_average('ME')
-        PE_avg = flow.volume_average('PE')
-        Lz_avg = flow.volume_average('Lz')
+        Re_avg = flow.grid_average('Re')
+        Ro_avg = flow.grid_average('Ro')
+        ME_avg = flow.grid_average('ME')
+        PE_avg = flow.grid_average('PE')
+        Lz_avg = flow.grid_average('Lz')
         τ_u_m = flow.max('|τ_u|')
         τ_s_m = flow.max('|τ_s|')
         τ_A_m = flow.max('|τ_A|')
-        log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
-        log_string += ", KE={:.2e} ({:.4e}), ME={:.2e}, PE={:.2e}".format(KE_avg, E0, ME_avg, PE_avg)
+        log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
+        log_string += ", KE={:.2e}, ME={:.2e}, PE={:.2e}".format(KE_avg, ME_avg, PE_avg)
+        log_string += ", Re={:.1e}, Ro={:.1e}".format(Re_avg, Ro_avg)
         log_string += ", Lz={:.1e}, τ=({:.1e},{:.1e},{:.1e})".format(Lz_avg, τ_u_m, τ_s_m, τ_A_m)
         logger.info(log_string)
 
         good_solution = np.isfinite(E0)
-    else:
-        log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
-        logger.info(log_string)
 
     if solver.iteration % hermitian_cadence in timestepper_history:
         for field in solver.state:
