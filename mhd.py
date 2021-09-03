@@ -5,13 +5,13 @@ Usage:
     mhd.py [options]
 
 Options:
-    --Ekman=<Ekman>                      Ekman number    [default: 3e-4]
-    --ConvectiveRossbySq=<Co2>           Squared Convective Rossby = Ra*Ek**2/Pr [default: 2.85e-2]
+    --Ekman=<Ekman>                      Ekman number    [default: 2.5e-5]
+    --ConvectiveRossbySq=<Co2>           Squared Convective Rossby = Ra*Ek**2/Pr [default: 0.168]
     --Prandtl=<Pr>                       Prandtl number  [default: 1]
     --MagneticPrandtl=<Pm>               Magnetic Prandtl number [default: 1]
 
-    --Ntheta=<Ntheta>                    Latitudinal modes [default: 32]
-    --Nr=<Nr>                            Radial modes [default: 32]
+    --Ntheta=<Ntheta>                    Latitudinal modes [default: 128]
+    --Nr=<Nr>                            Radial modes [default: 128]
     --mesh=<mesh>                        Processor mesh for 3-D runs; if not set a sensible guess will be made
 
     --benchmark                          Use benchmark initial conditions
@@ -148,6 +148,7 @@ power = lambda A, B: de.Power(A, B)
 Lift = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
 azavg = lambda A: de.Average(A, c.coords[0])
+shellavg = lambda A: de.Average(A, c.S2coordsys)
 avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 ell_func = lambda ell: ell+1
@@ -280,16 +281,17 @@ else:
 
 KE = 0.5*dot(u,u)
 PE = Co2*s
-ens = dot(curl(u),curl(u))
 Lz = dot(cross(r_vec,u), ez)
 ME = 0.5*dot(B,B)
+ME.store_last = True
 enstrophy = dot(curl(u),curl(u))
+enstrophy.store_last = True
 
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf, virtual_file=True, mode=mode)
 traces.add_task(avg(KE), name='KE')
 traces.add_task(avg(ME), name='ME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
-traces.add_task(np.sqrt(avg(ens)), name='Ro')
+traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
 traces.add_task(np.sqrt(avg(KE)*2)/Ek, name='Re')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
@@ -297,19 +299,30 @@ traces.add_task(avg(Lz), name='Lz')
 # Analysis
 eφ = de.Field(dist=d, bases=(b,), tensorsig=(c,))
 eφ['g'][0] = 1
+er = de.Field(dist=d, bases=(b,), tensorsig=(c,))
+er['g'][2] = 1
 Bφ = dot(B, eφ)
+Aφ = dot(A, eφ)
+ρ_cyl = de.Field(dist=d, bases=(b,))
+ρ_cyl.require_scales(dealias)
+ρ_cyl['g'] = r*np.sin(theta)
+Ωz = dot(u, eφ)/ρ_cyl # this is not ω_z; misses gradient terms; this is angular differential rotation.
 slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
 slices.add_task(enstrophy(theta=np.pi/2), name='enstrophy')
 slices.add_task(azavg(Bφ), name='<Bφ>')
+slices.add_task(azavg(Aφ), name='<Aφ>')
+slices.add_task(azavg(Ωz), name='<Ωz>')
+slices.add_task(azavg(s), name='<s>')
+slices.add_task(shellavg(s), name='s(r)')
+slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
 
 report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
-flow.add_property(np.sqrt(avg(KE)*2)/Ek, name='Re')
-flow.add_property(np.sqrt(avg(ens)), name='Ro')
+flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
+flow.add_property(np.sqrt(enstrophy), name='Ro')
 flow.add_property(KE, name='KE')
-flow.add_property(0.5*dot(B,B), name='ME') #this works
-#flow.add_property(ME, name='ME') #something's wrong with ME, but B.B works
+flow.add_property(ME, name='ME')
 flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
 flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
