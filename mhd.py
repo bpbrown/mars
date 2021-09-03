@@ -16,6 +16,7 @@ Options:
 
     --benchmark                          Use benchmark initial conditions
     --ell_benchmark=<ell_benchmark>      Integer value of benchmark perturbation m=+-ell [default: 3]
+    --adiabatic                          Start with adiabatic ICs.
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
     --safety=<safety>                    CFL safety factor [default: 0.4]
@@ -198,7 +199,8 @@ solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
 s.require_scales(L_dealias)
-s['g'] = 0.5*(1-r**2) # static solution
+if not args['--adiabatic']:
+    s['g'] = 0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
@@ -293,9 +295,13 @@ traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
 
 # Analysis
+eφ = de.Field(dist=d, bases=(b,), tensorsig=(c,))
+eφ['g'][0] = 1
+Bφ = dot(B, eφ)
 slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
-slices.add_task(enstrophy, name='enstrophy')
+slices.add_task(enstrophy(theta=np.pi/2), name='enstrophy')
+slices.add_task(azavg(Bφ), name='<Bφ>')
 
 report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
