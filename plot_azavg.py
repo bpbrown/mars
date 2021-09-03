@@ -7,7 +7,7 @@ Usage:
 
 Options:
      <files>...         List of files to compute azavg over.
-     --field=<field>    Data to timeaverage and plot [default: <omega_z>]
+     --field=<field>    Data to timeaverage and plot [default: <Bφ>]
      --filename=<file>  Filename for output [default: omega.png]
      --title=<title>    Title for plot [default: $<\Omega>$]
      --cmap=<cmap>      Colormap for plot [default: plasma]
@@ -24,7 +24,7 @@ from dedalus.tools import post
 
 
 def cylinder_plot(r, theta, data, min=None, max=None, cmap=None, title=None, center_zero=False):
-    padded_data = np.pad(data, ((0,0),(0,1),(1,0)), mode='edge')
+    padded_data = np.pad(data, ((0,1),(1,0)), mode='edge')
     r_pad = np.expand_dims(np.pad(r, ((1,1)), mode='constant', constant_values=(0,1)), axis=0)
     theta_pad = np.expand_dims(np.pad(theta, ((1,1)), mode='constant', constant_values=(np.pi,0)), axis=1)
     theta_pad = np.pi/2 - theta_pad # convert colatitude to latitude for plot labelling
@@ -32,7 +32,7 @@ def cylinder_plot(r, theta, data, min=None, max=None, cmap=None, title=None, cen
     r_plot, theta_plot = np.meshgrid(r_pad,theta_pad)
     fig, ax = plt.subplots(subplot_kw=dict(polar=True))
 
-    pcm = ax.pcolormesh(theta_plot,r_plot,padded_data[0,:,:], cmap=cmap)
+    pcm = ax.pcolormesh(theta_plot,r_plot,padded_data, cmap=cmap)
     ax.set_aspect(1)
     ax.set_thetalim(np.pi/2,-np.pi/2)
     ax.set_theta_offset(0)
@@ -46,16 +46,16 @@ def cylinder_plot(r, theta, data, min=None, max=None, cmap=None, title=None, cen
         logger.info("centering zero: {} -- 0 -- {}".format(pmin, pmax))
     else:
         cNorm = matplotlib.colors.Normalize(vmin=pmin, vmax=pmax)
-    pcm = ax.pcolormesh(theta_plot,r_plot,padded_data[0,:,:], cmap=cmap, vmin=pmin, vmax=pmax, norm=cNorm)
+    pcm = ax.pcolormesh(theta_plot,r_plot,padded_data, cmap=cmap, vmin=pmin, vmax=pmax, norm=cNorm)
     logger.info("image min {:.4g}, max {:.4g}".format(pmin, pmax))
-    
+
     ax_cb = fig.add_axes([0.8, 0.3, 0.03, 1-0.3*2])
     cb = fig.colorbar(pcm, cax=ax_cb, norm=cNorm, cmap=cmap)
     fig.subplots_adjust(left=0.05,right=0.85)
 
     r_cont, theta_cont = np.meshgrid(r_pad[:,:-1],theta_pad[:-1,:])
     levels = np.linspace(pmin,pmax,num=11)
-    ax.contour(theta_cont, r_cont, padded_data[0,:,:], levels, colors='darkgrey')
+    ax.contour(theta_cont, r_cont, padded_data, levels, colors='darkgrey')
 
     if title is not None:
         ax_cb.set_title(title)
@@ -86,12 +86,13 @@ def read_data(files,field):
         for file in file_list:
             logger.debug("opening file: {}".format(file))
             f = h5py.File(file, 'r')
+            data_slices = (slice(None), 0, slice(None), slice(None))
             if data is None:
-                data = np.array(f['tasks/{:s}'.format(field)][:])
+                data = np.array(f['tasks'][field][data_slices])
             else:
-                data = np.append(data, f['tasks/{:s}'.format(field)][:], axis=0)
-            r = f['scales/r/1.5'][:]
-            theta = f['scales/theta/1.5'][:]
+                data = np.append(data, f['tasks'][field][data_slices], axis=0)
+            theta = f['tasks'][field].dims[2][0][:]
+            r = f['tasks'][field].dims[3][0][:]
             if times is None:
                 times = f['scales/sim_time'][:]
             else:
@@ -171,22 +172,12 @@ if __name__ == "__main__":
 
     field = args['--field']
 
-    if field=='<omega_z>':
-        title = r'$\langle \Omega \rangle$'
-        filename = 'omega'
-        cmap = 'plasma'
-        center_zero = False
-    elif field=='<Bph>':
+    if field=='<Bφ>':
         title = r'$\langle B_\phi \rangle$'
         filename = 'Bphi'
         cmap = 'RdYlBu_r'
         center_zero = True
-    elif field=='<s>':
-        title = r'$\langle s \rangle$'
-        filename = 's'
-        cmap = 'RdYlBu_r'
-        center_zero = False
-    elif field=='<Aph>':
+    elif field=='<Aφ>':
         title = r'$\langle A_\phi \rangle$'
         filename = 'Aphi'
         cmap = 'viridis'
@@ -198,45 +189,27 @@ if __name__ == "__main__":
         cmap = args['--cmap']
         center_zero = False
 
-    build_data = True
-    if args['--datacube']:
-        datacube_filename = args['--datacube']
-        try:
-            start_time = time.time()
-            f_cube = h5py.File(datacube_filename,'r')
-            r = f_cube['scales/r/1.5'][:]
-            theta = f_cube['scales/theta/1.5'][:]
-            times = f_cube['scales/sim_time'][:]
-            try:
-                data = f_cube['tasks/{:s}'.format(field)][:]
-                end_time = time.time()
-                logger.info("time to read datacube {:g}sec".format(end_time-start_time))
-                build_data = False
-            except:
-                logger.info("Could not find field {:s} in datacube {:s}".format(field, datacube_filename))
-                f_cube.close()
-        except:
-            logger.info("Could not open datacube {:s}".format(datacube_filename))
-
-    if build_data:
-        data, times, theta, r = read_data(args['<files>'], field)
+    data, times, theta, r = read_data(args['<files>'], field)
 
     if MPI.COMM_WORLD.rank == 0:
         data_avg = np.mean(data, axis=0)
         if args['--datacube']:
             data_avg = np.expand_dims(data_avg, axis=0)
         logger.info("averaged from t={:.3g}--{:.3g} ({:3g} rotations)".format(min(times),max(times), (max(times)-min(times))/(4*np.pi)))
-        import dedalus_sphere.ball_wrapper as ball
-        L_max = N_theta = theta.shape[0]
-        N_max = N_r     = r.shape[0]
-        R_max = 0
-        B = ball.Ball(N_max,L_max,N_theta=N_theta,N_r=N_r,R_max=R_max,ell_min=0,ell_max=N_theta-1,m_min=0,m_max=0,a=0.)
-        weight_theta = B.weight(1,dimensions=3)
-        weight_r = B.weight(2,dimensions=3)
-        avg = np.sum(data_avg*weight_theta*weight_r)/np.sum(weight_theta*weight_r)
-        std_dev = np.sum(np.abs(data_avg-avg)*(weight_theta*weight_r))/np.sum(weight_theta*weight_r)
+        # import dedalus_sphere.ball_wrapper as ball
+        # L_max = N_theta = theta.shape[0]
+        # N_max = N_r     = r.shape[0]
+        # R_max = 0
+        # B = ball.Ball(N_max,L_max,N_theta=N_theta,N_r=N_r,R_max=R_max,ell_min=0,ell_max=N_theta-1,m_min=0,m_max=0,a=0.)
+        # weight_theta = B.weight(1,dimensions=3)
+        # weight_r = B.weight(2,dimensions=3)
+        # avg = np.sum(data_avg*weight_theta*weight_r)/np.sum(weight_theta*weight_r)
+        # std_dev = np.sum(np.abs(data_avg-avg)*(weight_theta*weight_r))/np.sum(weight_theta*weight_r)
+        # TODO: add properly weight average and std-dev (for ball geometry)
+        avg = np.mean(data_avg)
+        std_dev = np.std(data_avg)
         image_min = max(np.min(data_avg), avg-3*std_dev)
         image_max = min(np.max(data_avg), avg+3*std_dev)
-
+        print(r.shape, theta.shape, data_avg.shape)
         fig_data, pcm = cylinder_plot(r, theta, data_avg, cmap=cmap, title='{:s}'.format(title), min=image_min, max=image_max, center_zero=center_zero)
         fig_data.savefig('{:s}/{:s}'.format(str(output_path), filename))
