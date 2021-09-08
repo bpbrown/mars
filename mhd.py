@@ -16,7 +16,9 @@ Options:
 
     --benchmark                          Use benchmark initial conditions
     --ell_benchmark=<ell_benchmark>      Integer value of benchmark perturbation m=+-ell [default: 3]
-    --adiabatic                          Start with adiabatic ICs.
+
+    --thermal_eq                         Start with thermally equilibrated (unstable) ICs
+    --scale_eq=<scale_eq>                Scalie unstable profile by fixed amount [default: 0.1]
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
     --safety=<safety>                    CFL safety factor [default: 0.4]
@@ -155,19 +157,20 @@ ell_func = lambda ell: ell+1
 ellp1 = lambda A: de.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
-ez = de.Field(dist=d, bases=(b,), tensorsig=(c,))
+ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), name='ez')
 ez.set_scales(b.dealias)
+
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 ez_g = de.Grid(ez).evaluate()
 
-r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,))
+r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), name='r_vec')
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
 #r_vec_g = de.Grid(r_vec).evaluate()
 
 # Entropy source function, inspired from MESA model
-source = de.Field(dist=d, bases=(b,))
+source = de.Field(dist=d, bases=(b,), name='source')
 source['g'] = 3
 
 e = grad(u) + trans(grad(u))
@@ -200,8 +203,8 @@ solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
 s.require_scales(L_dealias)
-if not args['--adiabatic']:
-    s['g'] = 0.5*(1-r**2) # static solution
+if args['--thermal_eq']:
+    s['g'] = float(args['--scale_eq'])*0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
@@ -234,7 +237,7 @@ if invert_B_to_A:
     logger.info("set initial conditions for B")
     IC_problem = de.LBVP([φ, A, τ_A])
     IC_problem.add_equation((div(A), 0))
-    IC_problem.add_equation((curl(A) + grad(φ) + LiftTau(τ_A, -1), B_IC))
+    IC_problem.add_equation((curl(A) + grad(φ) + Lift(τ_A, -1), B_IC))
     IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
     IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
     IC_solver = IC_problem.build_solver()
