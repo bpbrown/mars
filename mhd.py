@@ -182,7 +182,7 @@ J = curl(B)
 problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
 problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u,-1),
-                      - dot(u, e) - cross(ez_g, u) + cross(J,B) ))
+                      - cross(curl(u) + ez, u) + cross(J,B) ))
 problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s,-1),
                       - dot(u, grad(s)) + Ek/Pr*source ))
 problem.add_equation((div(A), 0)) # coulomb gauge
