@@ -71,6 +71,7 @@ fig_E.savefig('{:s}/log_energies.pdf'.format(str(output_path)))
 # ax_tau[0].plot(t, data['τ_s2'], label=r'$\tau_s$')
 # ax_tau[1].plot(t, data['τ_u2'], label=r'$\tau_u$')
 # ax_tau[1].plot(t, data['τ_s2'], label=r'$\tau_s$')
+
 #
 # for ax in ax_tau:
 #     if subrange:
@@ -93,6 +94,23 @@ for ax in ax_L:
     ax.legend(loc='lower left')
 ax_L[1].set_yscale('log')
 fig_L.savefig('{:s}/angular_momentum.pdf'.format(str(output_path)))
+
+fig_f, ax_f = plt.subplots(nrows=2)
+for ax in ax_f:
+    ax.plot(t, data['Re'], label='Re')
+    ax_r = ax.twinx()
+    ax_r.plot(t, data['Ro'], label='Ro')
+    if subrange:
+        ax.set_xlim(t_min,t_max)
+    ax.set_xlabel('time')
+    ax.set_ylabel('fluid parameters')
+    ax.legend(loc='lower left')
+
+ax_f[1].set_yscale('log')
+ax_r.set_yscale('log') # relies on it being the last instance; poor practice
+
+fig_f.savefig('{:s}/Re_and_Ro.pdf'.format(str(output_path)))
+
 
 benchmark_set = ['KE', 'Re', 'Ro']
 i_ten = int(0.9*data[benchmark_set[0]].shape[0])
