@@ -10,8 +10,8 @@ Options:
     --ConvectiveRossbySq=<Co2>           Squared Convective Rossby = Ra*Ek**2/Pr [default: 2.85e-2]
     --Prandtl=<Prandtl>                  Prandtl number  [default: 1]
 
-    --L_max=<L_max>                      Max spherical harmonic [default: 30]
-    --N_max=<N_max>                      Max radial polynomial  [default: 31]
+    --Ntheta=<Ntheta>                    Latitudinal modes [default: 32]
+    --Nr=<Nr>                            Radial modes [default: 32]
     --mesh=<mesh>                        Processor mesh for 3-D runs; if not set a sensible guess will be made
 
     --benchmark                          Use benchmark initial conditions
@@ -58,7 +58,7 @@ dlog.setLevel(logging.WARNING)
 
 data_dir = './'+sys.argv[0].split('.py')[0]
 data_dir += '_Ek{}_Co{}_Pr{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'])
-data_dir += '_L{}_N{}'.format(args['--L_max'], args['--N_max'])
+data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
 if args['--benchmark']:
     data_dir += '_benchmark'
 if args['--label']:
@@ -95,8 +95,10 @@ else:
         mesh = [int(2**np.ceil(log2/2)),int(2**np.floor(log2/2))]
 logger.info("running on processor mesh={}".format(mesh))
 
-Lmax = int(args['--L_max'])
-Nmax = int(args['--N_max'])
+Nθ = int(args['--Ntheta'])
+Nr = int(args['--Nr'])
+Nφ = Nθ*2
+
 ncc_cutoff = float(args['--ncc_cutoff'])
 
 radius = 1
@@ -105,26 +107,18 @@ Ek = Ekman = float(args['--Ekman'])
 Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
 Pr = Prandtl = float(args['--Prandtl'])
 logger.info("Ek = {}, Co2 = {}, Pr = {}".format(Ek,Co2,Pr))
-# load balancing for real variables and parallel runs
-if Lmax % 2 == 1:
-    nm = 2*(Lmax+1)
-else:
-    nm = 2*(Lmax+2)
 
 L_dealias = 3/2
 N_dealias = 3/2
 
-
-
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh)
-b = de.BallBasis(c, (nm,Lmax+1,Nmax+1), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 b_S2 = b.S2_basis()
 phi1, theta1, r1 = b.local_grids((1,1,1))
 phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
 phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
-theta_target = thetag[0,(Lmax+1)//2,0]
 
 u = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
 p = de.Field(dist=d, bases=(b,), dtype=np.float64)
@@ -252,7 +246,7 @@ main_start = time.time()
 good_solution = True
 while solver.ok and good_solution:
     if not args['--fixed_dt']:
-        dt = CFL.compute_dt()
+        dt = CFL.compute_timestep()
 
     if solver.iteration % energy_report_cadence == 0:
         KE_avg = vol_avg(KE.evaluate())
