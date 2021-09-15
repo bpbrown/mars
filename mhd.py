@@ -63,7 +63,7 @@ dlog = logging.getLogger('basis')
 dlog.setLevel(logging.ERROR)
 
 data_dir = sys.argv[0].split('.py')[0]
-data_dir += '_Ek{}_Co{}_Pr{}_Pm{}'.format(args['--Ekman'],args['--ConvectiveRossbySq'],args['--Prandtl'],args['--MagneticPrandtl'])
+data_dir += '_Co{}_Ek{}_Pr{}_Pm{}'.format(args['--ConvectiveRossbySq'],args['--Ekman'],args['--Prandtl'],args['--MagneticPrandtl'])
 data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
 if args['--benchmark']:
     data_dir += '_benchmark'
@@ -112,6 +112,9 @@ Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
 Pr = Prandtl = float(args['--Prandtl'])
 Pm = MagneticPrandtl = float(args['--MagneticPrandtl'])
 
+logger.debug(sys.argv)
+logger.debug('-'*40)
+logger.info("Run parameters")
 logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}".format(Ek,Co2,Pr,Pm))
 
 dealias = L_dealias = N_dealias = 3/2
