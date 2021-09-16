@@ -113,18 +113,15 @@ N_dealias = 3/2
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
-d = de.Distributor((c,), mesh=mesh)
+d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
 b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
-b_S2 = b.S2_basis()
-phi1, theta1, r1 = b.local_grids((1,1,1))
 phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
-phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
 
-u = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
-p = de.Field(dist=d, bases=(b,), dtype=np.float64)
-s = de.Field(dist=d, bases=(b,), dtype=np.float64)
-τ_u = de.Field(dist=d, bases=(b_S2,), tensorsig=(c,), dtype=np.float64)
-τ_s = de.Field(dist=d, bases=(b_S2,), dtype=np.float64)
+u = d.VectorField(c, name='u', bases=b)
+p = d.Field(name='p', bases=b)
+s = d.Field(name='s', bases=b)
+τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
+τ_s = d.Field(name="τ_s", bases=b.S2_basis())
 
 # Parameters and operators
 div = lambda A: de.Divergence(A, index=0)
@@ -144,18 +141,18 @@ integ = lambda A: de.Integrate(A, c)
 avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 # NCCs and variables of the problem
-ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
+ez = d.VectorField(c, name='ez', bases=b)
 ez.set_scales(b.dealias)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 #ez_g = de.Grid(ez).evaluate()
 
-r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
+r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
 
 # Entropy source function; here constant volume heating rate
-source = de.Field(dist=d, bases=(b,), dtype=np.float64)
+source = d.Field(name='S', bases=b)
 source['g'] = 3
 
 # for boundary condition
@@ -187,12 +184,9 @@ if args['--benchmark']:
 else:
     amp = 1e-5
     rng = np.random.default_rng(seed=42+rank)
-    noise = de.Field(name='noise', dist=d, bases=(b,), dtype=np.float64)
+    noise = d.Field(name='noise', bases=b)
     noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
-    noise.require_scales(0.25)
-    noise['g']
-    noise.require_scales(1)
-    s.require_scales(1)
+    noise.low_pass_filter(scales=0.25)
     s['g'] += amp*noise['g']
 
 # Solver
