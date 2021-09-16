@@ -141,35 +141,30 @@ trace = lambda A: de.Trace(A)
 power = lambda A, B: de.Power(A, B)
 LiftTau = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
-sqrt = lambda A: operators.UnaryGridFunction(np.sqrt, A)
+avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 # NCCs and variables of the problem
 ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), dtype=np.float64)
 ez.set_scales(b.dealias)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-ez_g = de.Grid(ez).evaluate()
-
-T = de.Field(dist=d, bases=(b.radial_basis,), dtype=np.float64)
-
-T['g'] = 0.5*(1-r1**2)
+#ez_g = de.Grid(ez).evaluate()
 
 r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), dtype=np.float64)
 r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
-#r_vec_g = de.operators.Grid(r_vec).evaluate()
 
-# Entropy source function, inspired from MESA model
+# Entropy source function; here constant volume heating rate
 source = de.Field(dist=d, bases=(b,), dtype=np.float64)
 source['g'] = 3
 
+# for boundary condition
 e = grad(u) + trans(grad(u))
-e.store_last = True
 
 problem = de.IVP([p, u,  τ_u, s,  τ_s])
 problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
-                      - dot(u, e) - cross(ez_g, u)))
+                      - cross(curl(u) + ez, u) ))
 problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + LiftTau(τ_s,-1),
                      - dot(u, grad(s)) + Ek/Pr*source ))
 # Boundary conditions
@@ -203,34 +198,32 @@ else:
 # Solver
 solver = problem.build_solver(timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
 
-def vol_avg(q):
-    Q = integ(q/(4/3*np.pi)).evaluate()['g']
-    if rank == 0:
-        return Q[0][0][0]
-    else:
-        return 0
-
-int_test = de.Field(dist=d, bases=(b,), dtype=np.float64)
-int_test['g']=1
-int_test.require_scales(L_dealias)
-logger.info("vol_avg(1)={}".format(vol_avg(int_test)))
-
 KE = 0.5*dot(u,u)
 ens = dot(curl(u),curl(u))
-Ts = T*s
+PE = Co2*s
 Lz = dot(cross(r_vec,u), ez)
+enstrophy = dot(curl(u),curl(u))
+enstrophy.store_last = True
 
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
-traces.add_task(integ(KE)/(4/3*np.pi), name='KE')
+traces.add_task(avg(KE), name='KE')
 traces.add_task(integ(KE)/Ek**2, name='E0')
-traces.add_task(sqrt(integ(ens))/(4/3*np.pi), name='Ro')
-traces.add_task(sqrt(integ(2*KE))/Ek/(4/3*np.pi), name='Re')
-traces.add_task(Co2*integ(Ts)/(4/3*np.pi), name='PE')
-traces.add_task(integ(Lz)/(4/3*np.pi), name='Lz')
+traces.add_task(np.sqrt(avg(ens)), name='Ro')
+traces.add_task(np.sqrt(2/Ek*avg(KE)), name='Re')
+traces.add_task(avg(PE), name='PE')
+traces.add_task(avg(Lz), name='Lz')
 
 
 report_cadence = 100
-energy_report_cadence = 100
+flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
+flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
+flow.add_property(np.sqrt(enstrophy), name='Ro')
+flow.add_property(KE, name='KE')
+flow.add_property(PE, name='PE')
+flow.add_property(Lz, name='Lz')
+flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
+flow.add_property(np.abs(τ_s), name='|τ_s|')
+
 max_dt = float(args['--max_dt'])
 if args['--fixed_dt']:
     dt = max_dt
@@ -244,36 +237,35 @@ CFL.add_velocity(u)
 
 main_start = time.time()
 good_solution = True
-while solver.ok and good_solution:
+while solver.proceed and good_solution:
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
-
-    if solver.iteration % energy_report_cadence == 0:
-        KE_avg = vol_avg(KE.evaluate())
-        E0 = KE_avg/Ek**2*(4/3*np.pi) # volume integral, not average
-
-        Ro = np.sqrt(vol_avg(ens.evaluate()))
-
-        Re = np.sqrt(2*vol_avg(KE.evaluate()))/Ek
-
-        PE = Co2*vol_avg(Ts.evaluate())
-
-        Lz_avg = vol_avg(Lz.evaluate())
-
-        log_string = "iter: {:d}, dt={:.2e}, t={:.3e} ({:.3e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
-        log_string += ", KE={:.2e} ({:.4e}), PE={:.2e}, Lz={:.2e}".format(KE_avg, E0, PE, Lz_avg)
+    if solver.iteration % report_cadence == 0 and solver.iteration > 0:
+        KE_avg = flow.grid_average('KE') # volume average needs a defined volume
+        E0 = KE_avg/Ek**2*(4*np.pi/3) # integral rather than avg
+        Re_avg = flow.grid_average('Re')
+        Ro_avg = flow.grid_average('Ro')
+        PE_avg = flow.grid_average('PE')
+        Lz_avg = flow.grid_average('Lz')
+        τ_u_m = flow.max('|τ_u|')
+        τ_s_m = flow.max('|τ_s|')
+        log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
+        log_string += ", KE={:.2e} ({:.6e}), PE={:.2e}".format(KE_avg, E0, PE_avg)
+        log_string += ", Re={:.1e}, Ro={:.1e}".format(Re_avg, Ro_avg)
+        log_string += ", Lz={:.1e}, τ=({:.1e},{:.1e})".format(Lz_avg, τ_u_m, τ_s_m)
         logger.info(log_string)
+
         good_solution = np.isfinite(E0)
     if solver.iteration % hermitian_cadence in timestepper_history:
         for field in solver.state:
-            field['g']
+            field.require_grid_space()
     solver.step(dt)
 
 end_time = time.time()
 
 startup_time = main_start - start_time
 main_loop_time = end_time - main_start
-DOF = nm*(Lmax+1)*(Nmax+1)
+DOF = Nφ*Nθ*Nr
 niter = solver.iteration
 if rank==0:
     print('performance metrics:')
