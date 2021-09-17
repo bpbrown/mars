@@ -217,6 +217,10 @@ flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
 flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
 flow.add_property(np.abs(τ_s), name='|τ_s|')
+one = d.Field(name='one', bases=b)
+one.require_scales(L_dealias)
+one['g'] = 1 #0.5*(1-r**2)
+flow.add_property(one, name='one')
 
 max_dt = float(args['--max_dt'])
 if args['--fixed_dt']:
@@ -231,16 +235,19 @@ CFL.add_velocity(u)
 
 main_start = time.time()
 good_solution = True
+vol = 4*np.pi/3
 while solver.proceed and good_solution:
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
-        KE_avg = flow.grid_average('KE') # volume average needs a defined volume
-        E0 = KE_avg/Ek**2*(4*np.pi/3) # integral rather than avg
-        Re_avg = flow.grid_average('Re')
-        Ro_avg = flow.grid_average('Ro')
-        PE_avg = flow.grid_average('PE')
-        Lz_avg = flow.grid_average('Lz')
+        KE_avg = flow.volume_integral('KE')/vol # volume average needs a defined volume
+        E0 = flow.volume_integral('KE')/Ek**2 # integral rather than avg
+        Re_avg = flow.volume_integral('Re')/vol
+        Ro_avg = flow.volume_integral('Ro')/vol
+        PE_avg = flow.volume_integral('PE')/vol
+        Lz_avg = flow.volume_integral('Lz')/vol
+        one_avg = flow.volume_integral('one')/vol
+        logger.info("one = {}".format(one_avg))
         τ_u_m = flow.max('|τ_u|')
         τ_s_m = flow.max('|τ_s|')
         log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
