@@ -29,7 +29,7 @@ def read_data(files):
 
     file_list = []
     post.visit_writes(files,  accumulate_files, file_list=file_list)
-    logger.info(file_list)
+    logger.debug(file_list)
 
     data = {}
     times = None
@@ -52,16 +52,16 @@ def read_data(files):
                         data[task] = np.append(data[task], f['tasks'][task][data_slices], axis=0)
                     else:
                         data[task] = np.array(f['tasks'][task][data_slices])
-                    # This gets repeated for every task; not ideal
-                    theta = f['tasks'][task].dims[2][0][:]
-                    r = f['tasks'][task].dims[3][0][:]
+                    if r is None or theta is None:
+                        theta = f['tasks'][task].dims[2][0][:]
+                        r = f['tasks'][task].dims[3][0][:]
                     if times is None:
                         times = f['scales/sim_time'][:]
                     else:
                         times = np.append(times, f['scales/sim_time'][:])
             f.close()
     else:
-        data = np.zeros(1,1,1)
+        data = {'zero':np.zeros((1,1,1))}
         times = np.zeros(1)
 
     comm.Barrier()
@@ -69,46 +69,52 @@ def read_data(files):
     n_global_time = np.array(0)
     n_global_data = np.array(0)
 
-    comm.Reduce([np.array(times.size), MPI.INT], [n_global_time, MPI.INT], op=MPI.SUM, root=0)
-    comm.Reduce([np.array(data.size), MPI.INT], [n_global_data, MPI.INT], op=MPI.SUM, root=0)
+    data_set = data
+    global_data_set = {}
+    for task in data_set:
+        data = data_set[task]
+        # we uselessly send the times many times; works for now
+        comm.Reduce([np.array(times.size), MPI.INT], [n_global_time, MPI.INT], op=MPI.SUM, root=0)
+        comm.Reduce([np.array(data.size), MPI.INT], [n_global_data, MPI.INT], op=MPI.SUM, root=0)
 
-    if rank == 0:
-        logger.info("n_time = {}, n_data = {}".format(n_global_time, n_global_data))
-        n_times_each = np.empty([size], dtype=np.int)
-        n_data_each = np.empty([size], dtype=np.int)
-        global_time = np.empty([n_global_time], dtype=np.float64)
-        global_data = np.empty([n_global_time,]+list(data[0,:,:].shape),dtype=np.float64)
-        logger.debug(n_global_time)
-        logger.debug("{}, {}, {}".format(data.shape, global_time.shape, global_data.shape))
-    else:
-        n_times_each = None
-        n_data_each = None
-        global_time = None
-        global_data = None
-        send_counts = None
-        displacements = None
+        if rank == 0:
+            logger.info("{}: n_time = {}, n_data = {}".format(task, n_global_time, n_global_data))
+            n_times_each = np.empty([size], dtype=np.int)
+            n_data_each = np.empty([size], dtype=np.int)
+            global_time = np.empty([n_global_time], dtype=np.float64)
+            global_data = np.empty([n_global_time,]+list(data[0,:,:].shape),dtype=np.float64)
+            logger.debug(n_global_time)
+            logger.debug("{}, {}, {}".format(data.shape, global_time.shape, global_data.shape))
+        else:
+            n_times_each = None
+            n_data_each = None
+            global_time = None
+            global_data = None
+            send_counts = None
+            displacements = None
 
-    comm.Gather(np.array(times.size), n_times_each, root=0)
-    comm.Gather(np.array(data.size), n_data_each, root=0)
-    if rank == 0:
-        displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_times_each))[0:-1])
-        send_counts = tuple(n_times_each)
+        comm.Gather(np.array(times.size), n_times_each, root=0)
+        comm.Gather(np.array(data.size), n_data_each, root=0)
+        if rank == 0:
+            displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_times_each))[0:-1])
+            send_counts = tuple(n_times_each)
 
-    comm.Gatherv(times.astype(np.float64), [global_time, send_counts, displacements, MPI.DOUBLE], root=0)
+        comm.Gatherv(times.astype(np.float64), [global_time, send_counts, displacements, MPI.DOUBLE], root=0)
 
-    if rank == 0:
-        displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_data_each))[0:-1])
-        send_counts = tuple(n_data_each)
-    comm.Gatherv(data.astype(np.float64), [global_data, send_counts, displacements, MPI.DOUBLE], root=0)
-
+        if rank == 0:
+            displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_data_each))[0:-1])
+            send_counts = tuple(n_data_each)
+        comm.Gatherv(data.astype(np.float64), [global_data, send_counts, displacements, MPI.DOUBLE], root=0)
+        global_data_set[task] = global_data
     end_time = time.time()
     logger.info("time to build dataset {:g}sec".format(end_time-start_time))
-    return global_data, global_time, theta, r
+    return global_data_set, global_time, theta, r
 
 if __name__ == "__main__":
     import h5py
     import pathlib
     import time
+    import glob
     import dedalus.public as de # parse dedalus.cfg file
     import logging
     logger = logging.getLogger(__name__.split('.')[-1])
@@ -130,9 +136,14 @@ if __name__ == "__main__":
         data_dir += '/'
         output_path = pathlib.Path(data_dir).absolute()
 
+    if args['--datacube']:
+        datacube_filename = args['--datacube']
+    else:
+        datacube_filename = data_dir+'time_lat_datacube.h5'
+
     start_time = time.time()
     if args['--case']:
-        file_glob = args['--case']+'/snapshots/snapshots_s*.h5'
+        file_glob = args['--case']+'/slices/slices_s*.h5'
         files = glob.glob(file_glob)
     else:
         files = args['<files>']
