@@ -71,35 +71,37 @@ def read_data(files):
 
     data_set = data
     global_data_set = {}
+
+    comm.Reduce([np.array(times.size), MPI.INT], [n_global_time, MPI.INT], op=MPI.SUM, root=0)
+
+    if rank == 0:
+        n_times_each = np.empty([size], dtype=np.int)
+        global_time = np.empty([n_global_time], dtype=np.float64)
+    else:
+        n_times_each = None
+        global_time = None
+    comm.Gather(np.array(times.size), n_times_each, root=0)
+    if rank == 0:
+        send_counts = tuple(n_times_each)
+        displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_times_each))[0:-1])
+    else:
+        send_counts = None
+        displacements = None
+    comm.Gatherv(times.astype(np.float64), [global_time, send_counts, displacements, MPI.DOUBLE], root=0)
+
     for task in data_set:
         data = data_set[task]
-        # we uselessly send the times many times; works for now
-        comm.Reduce([np.array(times.size), MPI.INT], [n_global_time, MPI.INT], op=MPI.SUM, root=0)
         comm.Reduce([np.array(data.size), MPI.INT], [n_global_data, MPI.INT], op=MPI.SUM, root=0)
-
         if rank == 0:
             logger.info("{}: n_time = {}, n_data = {}".format(task, n_global_time, n_global_data))
-            n_times_each = np.empty([size], dtype=np.int)
             n_data_each = np.empty([size], dtype=np.int)
-            global_time = np.empty([n_global_time], dtype=np.float64)
             global_data = np.empty([n_global_time,]+list(data[0,:,:].shape),dtype=np.float64)
-            logger.debug(n_global_time)
             logger.debug("{}, {}, {}".format(data.shape, global_time.shape, global_data.shape))
         else:
-            n_times_each = None
             n_data_each = None
-            global_time = None
             global_data = None
-            send_counts = None
-            displacements = None
 
-        comm.Gather(np.array(times.size), n_times_each, root=0)
         comm.Gather(np.array(data.size), n_data_each, root=0)
-        if rank == 0:
-            displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_times_each))[0:-1])
-            send_counts = tuple(n_times_each)
-
-        comm.Gatherv(times.astype(np.float64), [global_time, send_counts, displacements, MPI.DOUBLE], root=0)
 
         if rank == 0:
             displacements = tuple(np.append(np.zeros(1, dtype=np.int), np.cumsum(n_data_each))[0:-1])
