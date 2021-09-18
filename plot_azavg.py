@@ -24,6 +24,10 @@ from dedalus.tools import post
 
 
 def cylinder_plot(r, theta, data, min=None, max=None, cmap=None, title=None, center_zero=False):
+    import matplotlib
+    import logging
+    logger = logging.getLogger(__name__)
+
     padded_data = np.pad(data, ((0,1),(1,0)), mode='edge')
     r_pad = np.expand_dims(np.pad(r, ((1,1)), mode='constant', constant_values=(0,1)), axis=0)
     theta_pad = np.expand_dims(np.pad(theta, ((1,1)), mode='constant', constant_values=(np.pi,0)), axis=1)
