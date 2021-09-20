@@ -323,6 +323,9 @@ slices.add_task(azavg(s), name='<s>')
 slices.add_task(shellavg(s), name='s(r)')
 slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
 
+checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
+checkpoint.add_tasks(solver.state)
+
 report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
 flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
@@ -347,11 +350,16 @@ if args['--run_time_rotation']:
 else:
     solver.stop_sim_time = float(args['--run_time_diffusion'])/Ek
 
+if args['--run_time_iter']:
+    solver.stop_iteration = int(float(args['--run_time_iter']))
+
 logger.info("avg div A: {}".format(avg(div(A)).evaluate()['g']))
 
-main_start = time.time()
+startup_iter = 10
 good_solution = True
 while solver.proceed and good_solution:
+    if solver.iteration == startup_iter:
+        main_start = time.time()
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
@@ -383,7 +391,7 @@ end_time = time.time()
 startup_time = main_start - start_time
 main_loop_time = end_time - main_start
 DOF = Nφ*Nθ*Nr
-niter = solver.iteration
+niter = solver.iteration - startup_iter
 if rank==0:
     print('performance metrics:')
     print('    startup time   : {:}'.format(startup_time))
