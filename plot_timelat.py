@@ -11,9 +11,9 @@ Options:
      --window=<window>  Time window to extract from; format is window=min_t,max_t
 
      --integrate        Integrate quantity in radius (with r^2 weighting)
-     --field=<field>    Data to timeaverage and plot [default: <omega_z>]
-     --filename=<file>  Filename for output [default: omega.png]
-     --title=<title>    Title for plot [default: $<\Omega>$]
+     --field=<field>    Data to timeaverage and plot [default: <Bφ>]
+     --filename=<file>  Filename for output
+     --title=<title>    Title for plot
      --cmap=<cmap>      Colormap for plot [default: plasma]
      --symmetric_cmap   Symmeterize image limits
      --use_std_dev_avg  Set image limits using the standard deviation of the average profile, rather than full time-sequence
@@ -93,6 +93,8 @@ f_cube.close()
 end_time = time.time()
 print("time to read datacube {:g}sec".format(end_time-start_time))
 
+logger.info("data shape on read in {}".format(data.shape))
+
 if args['--window']:
     t_min, t_max = [float(t) for t in args['--window'].split(',')]
     i_min = np.argmin(np.abs(times-t_min))
@@ -113,8 +115,10 @@ logger.info("averaged from t={:.3g}--{:.3g} ({:3g} rotations)".format(min(times)
 # weight_r = B.weight(2,dimensions=3)
 # avg = np.sum(data_avg*weight_theta*weight_r)/np.sum(weight_theta*weight_r)
 # std_dev = np.sum(np.abs(data_avg-avg)*(weight_theta*weight_r))/np.sum(weight_theta*weight_r)
-image_min = np.min(data_avg)#, avg-3*std_dev)
-image_max = np.max(data_avg)#, avg+3*std_dev)
+avg = np.mean(data_avg)
+std_dev = np.std(data_avg)
+image_min = max(np.min(data_avg), avg-3*std_dev)
+image_max = min(np.max(data_avg), avg+3*std_dev)
 
 fig_data, pcm = cylinder_plot(r, theta, data_avg, cmap=cmap, title='{:s}'.format(title), min=image_min, max=image_max, center_zero=center_zero)
 fig_data.savefig('{:s}/{:s}_{:.0f}_{:.0f}.png'.format(str(output_path), filename, times[0], times[-1]), dpi=600)
@@ -149,8 +153,10 @@ n_times = times.shape[0]
 # else:
 #     std_dev = np.sum(np.abs(data-avg)*(weight_theta))/np.sum(weight_theta)/n_times
 
-# image_min = avg-3*std_dev
-# image_max = avg+3*std_dev
+avg = np.mean(data)
+std_dev = np.std(data)
+image_min = avg-3*std_dev
+image_max = avg+3*std_dev
 
 # if args['--symmetric_cmap']:
 #     if image_max > 0 and image_min < 0:
@@ -165,7 +171,7 @@ print("data.shape: {}".format(data.shape))
 print("data     min/max: {:g}/{:g}".format(np.min(data), np.max(data)))
 print("data_avg min/max: {:g}/{:g}".format(np.min(data_avg), np.max(data_avg)))
 print("image    min/max: {:g}/{:g}".format(image_min, image_max))
-
+print(times)
 fig, ax = plt.subplots()
 lat = 180*(np.pi/2-theta)/np.pi
 

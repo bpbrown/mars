@@ -99,7 +99,7 @@ fig_f, ax_f = plt.subplots(nrows=2)
 for ax in ax_f:
     ax.plot(t, data['Re'], label='Re')
     ax_r = ax.twinx()
-    ax_r.plot(t, data['Ro'], label='Ro')
+    ax_r.plot(t, data['Ro'], label='Ro', color='tab:orange')
     if subrange:
         ax.set_xlim(t_min,t_max)
     ax.set_xlabel('time')
