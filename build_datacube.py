@@ -55,10 +55,10 @@ def read_data(files):
                     if r is None or theta is None:
                         theta = f['tasks'][task].dims[2][0][:]
                         r = f['tasks'][task].dims[3][0][:]
-                    if times is None:
-                        times = f['scales/sim_time'][:]
-                    else:
-                        times = np.append(times, f['scales/sim_time'][:])
+            if times is None:
+                times = f['scales/sim_time'][:]
+            else:
+                times = np.append(times, f['scales/sim_time'][:])
             f.close()
     else:
         data = {'zero':np.zeros((1,1,1))}
@@ -73,7 +73,6 @@ def read_data(files):
     global_data_set = {}
 
     comm.Reduce([np.array(times.size), MPI.INT], [n_global_time, MPI.INT], op=MPI.SUM, root=0)
-
     if rank == 0:
         n_times_each = np.empty([size], dtype=np.int)
         global_time = np.empty([n_global_time], dtype=np.float64)
