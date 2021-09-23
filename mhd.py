@@ -123,19 +123,16 @@ start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
 b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
-b_S2 = b.S2_basis()
-phi1, theta1, r1 = b.local_grids((1,1,1))
-phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
-phig,thetag,rg= b.global_grids((L_dealias,L_dealias,N_dealias))
+phi, theta, r = b.local_grids()
 
-u = de.Field(name="u", dist=d, bases=(b,), tensorsig=(c,))
-p = de.Field(name="p", dist=d, bases=(b,))
-s = de.Field(name="s", dist=d, bases=(b,))
-A = de.Field(name="A", dist=d, bases=(b,), tensorsig=(c,))
-φ = de.Field(name="φ", dist=d, bases=(b,))
-τ_u = de.Field(name="τ_u", dist=d, bases=(b_S2,), tensorsig=(c,))
-τ_s = de.Field(name="τ_s", dist=d, bases=(b_S2,))
-τ_A = de.Field(name="τ_A", dist=d, bases=(b_S2,), tensorsig=(c,))
+u = d.VectorField(c, name="u", bases=b)
+p = d.Field(name="p", bases=b)
+s = d.Field(name="s", bases=b)
+A = d.VectorField(c, name="A", bases=b)
+φ = d.Field(name="φ", bases=b)
+τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
+τ_s = d.Field(name="τ_s", bases=b.S2_basis())
+τ_A = d.VectorField(c, name="τ_A", bases=b.S2_basis())
 
 # Parameters and operators
 div = lambda A: de.Divergence(A, index=0)
@@ -160,20 +157,15 @@ ell_func = lambda ell: ell+1
 ellp1 = lambda A: de.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
-ez = de.Field(dist=d, bases=(b,), tensorsig=(c,), name='ez')
-ez.set_scales(b.dealias)
-
+ez = d.VectorField(c, bases=b, name='ez')
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-ez_g = de.Grid(ez).evaluate()
 
-r_vec = de.Field(dist=d, bases=(b.radial_basis,), tensorsig=(c,), name='r_vec')
-r_vec.set_scales(b.dealias)
+r_vec = d.VectorField(c, bases=b.radial_basis, name='r_vec')
 r_vec['g'][2] = r
-#r_vec_g = de.Grid(r_vec).evaluate()
 
 # Entropy source function, inspired from MESA model
-source = de.Field(dist=d, bases=(b,), name='source')
+source = d.Field(bases=b, name='source')
 source['g'] = 3
 
 e = grad(u) + trans(grad(u))
@@ -205,33 +197,26 @@ logger.info("Problem built")
 solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
-s.require_scales(L_dealias)
 if args['--thermal_eq']:
     s['g'] = float(args['--scale_eq'])*0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
     norm = 1/(2**𝓁*np.math.factorial(𝓁))*np.sqrt(np.math.factorial(2*𝓁+1)/(4*np.pi))
-    s.require_scales(L_dealias)
     s['g'] += amp*norm*r**𝓁*(1-r**2)*(np.cos(𝓁*phi)+np.sin(𝓁*phi))*np.sin(theta)**𝓁
     logger.info("benchmark run with perturbations at ell={} with norm={}".format(𝓁, norm))
 else:
     amp = 1e-5
-    rng = np.random.default_rng(seed=42+rank)
-    noise = de.Field(name='noise', dist=d, bases=(b,))
-    noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
-    noise.require_scales(0.25)
-    noise['g']
-    noise.require_scales(1)
-    s.require_scales(1)
+    noise = d.Field(name='noise', bases=b)
+    noise.fill_random('g', seed=42, distribution='standard_normal')
+    noise.low_pass_filter(scales=0.25)
     s['g'] += amp*noise['g']
 
 
 mag_amp = 1e-4
 invert_B_to_A = False
 if invert_B_to_A:
-    B_IC = de.Field(name="B_IC", dist=d, bases=(b,), tensorsig=(c,))
-    B_IC.require_scales(dealias)
+    B_IC = d.VectorField(c, name="B_IC", bases=b)
     B_IC['g'][2] = 0 # radial
     B_IC['g'][1] = -mag_amp*3./2.*r*(-1+4*r**2-6*r**4+3*r**6)*(np.cos(phi)+np.sin(phi))
     B_IC['g'][0] = -mag_amp*3./4.*r*(-1+r**2)*np.cos(theta)* \
@@ -267,7 +252,6 @@ else:
     A_analytic_0 = (1/8*(1-24/5*r**2+72/7*r**4-32/3*r**6+45/11*r**8)
                        *(np.cos(phi)+np.sin(phi)))
 
-    A.require_scales(dealias)
     A['g'][0] = mag_amp*A_analytic_0
     A['g'][1] = mag_amp*A_analytic_1
     A['g'][2] = mag_amp*A_analytic_2
@@ -303,16 +287,16 @@ traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
 
 # Analysis
-eφ = de.Field(dist=d, bases=(b,), tensorsig=(c,))
+eφ = d.VectorField(c, bases=b)
 eφ['g'][0] = 1
-er = de.Field(dist=d, bases=(b,), tensorsig=(c,))
+er = d.VectorField(c, bases=b)
 er['g'][2] = 1
 Bφ = dot(B, eφ)
 Aφ = dot(A, eφ)
-ρ_cyl = de.Field(dist=d, bases=(b,))
-ρ_cyl.require_scales(dealias)
+ρ_cyl = d.Field(bases=b)
 ρ_cyl['g'] = r*np.sin(theta)
 Ωz = dot(u, eφ)/ρ_cyl # this is not ω_z; misses gradient terms; this is angular differential rotation.
+
 slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
 slices.add_task(enstrophy(theta=np.pi/2), name='enstrophy')
