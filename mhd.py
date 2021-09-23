@@ -157,11 +157,12 @@ ell_func = lambda ell: ell+1
 ellp1 = lambda A: de.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
-ez = d.VectorField(c, bases=b, name='ez')
+bk = b.clone_with(k=1) # ez on k+1 level to match curl(u)
+ez = d.VectorField(c, name='ez', bases=bk)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 
-r_vec = d.VectorField(c, bases=b.radial_basis, name='r_vec')
+r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
 r_vec['g'][2] = r
 
 # Entropy source function, inspired from MESA model

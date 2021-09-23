@@ -139,7 +139,8 @@ integ = lambda A: de.Integrate(A, c)
 avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 # NCCs and variables of the problem
-ez = d.VectorField(c, name='ez', bases=b)
+bk = b.clone_with(k=1) # ez on k+1 level to match curl(u)
+ez = d.VectorField(c, name='ez', bases=bk)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 
