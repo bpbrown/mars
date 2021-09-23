@@ -74,8 +74,6 @@ with Sync() as sync:
         logdir = os.path.join(data_dir,'logs')
         if not os.path.exists(logdir):
             os.mkdir(logdir)
-print(os.path.join(data_dir,'logs/dedalus_log'))
-
 
 import dedalus.public as de
 from dedalus.core import timesteppers, operators
@@ -115,7 +113,7 @@ start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
 b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
-phi, theta, r = b.local_grids((L_dealias,L_dealias,N_dealias))
+phi, theta, r = b.local_grids()
 
 u = d.VectorField(c, name='u', bases=b)
 p = d.Field(name='p', bases=b)
@@ -142,13 +140,10 @@ avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 # NCCs and variables of the problem
 ez = d.VectorField(c, name='ez', bases=b)
-ez.set_scales(b.dealias)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
-#ez_g = de.Grid(ez).evaluate()
 
 r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
-r_vec.set_scales(b.dealias)
 r_vec['g'][2] = r
 
 # Entropy source function; here constant volume heating rate
@@ -157,6 +152,7 @@ source['g'] = 3
 
 # for boundary condition
 e = grad(u) + trans(grad(u))
+e.store_last = True
 
 problem = de.IVP([p, u,  τ_u, s,  τ_s])
 problem.add_equation((div(u), 0))
@@ -171,21 +167,18 @@ problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
 logger.info("Problem built")
 
-s.require_scales(L_dealias)
 s['g'] = 0.5*(1-r**2) # static solution
 
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
     norm = 1/(2**𝓁*np.math.factorial(𝓁))*np.sqrt(np.math.factorial(2*𝓁+1)/(4*np.pi))
-    s.require_scales(L_dealias)
     s['g'] += amp*norm*r**𝓁*(1-r**2)*(np.cos(𝓁*phi)+np.sin(𝓁*phi))*np.sin(theta)**𝓁
     logger.info("benchmark run with perturbations at ell={} with norm={}".format(𝓁, norm))
 else:
     amp = 1e-5
-    rng = np.random.default_rng(seed=42+rank)
     noise = d.Field(name='noise', bases=b)
-    noise['g'] = 2*rng.random(noise['g'].shape)-1 # -1--1 uniform distribution
+    noise.fill_random('g', seed=42, distribution='standard_normal')
     noise.low_pass_filter(scales=0.25)
     s['g'] += amp*noise['g']
 
@@ -217,26 +210,42 @@ flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
 flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
 flow.add_property(np.abs(τ_s), name='|τ_s|')
-one = d.Field(name='one', bases=b)
-one.require_scales(L_dealias)
-one['g'] = 1 #0.5*(1-r**2)
-flow.add_property(one, name='one')
+# one = d.Field(name='one', bases=b)
+# one.require_scales(L_dealias)
+# one['g'] = 1 #0.5*(1-r**2)
+# flow.add_property(one, name='one')
 
 max_dt = float(args['--max_dt'])
 if args['--fixed_dt']:
     dt = max_dt
 else:
     dt = max_dt/10
+if not args['--restart']:
+    mode = 'overwrite'
+else:
+    write, dt = solver.load_state(args['--restart'])
+    mode = 'append'
+
 cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
 hermitian_cadence = 100
 CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 
-main_start = time.time()
+if args['--run_time_rotation']:
+    solver.stop_sim_time = float(args['--run_time_rotation'])
+else:
+    solver.stop_sim_time = float(args['--run_time_diffusion'])/Ek
+
+if args['--run_time_iter']:
+    solver.stop_iteration = int(float(args['--run_time_iter']))
+
+startup_iter = 10
 good_solution = True
 vol = 4*np.pi/3
 while solver.proceed and good_solution:
+    if solver.iteration == startup_iter:
+        main_start = time.time()
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
@@ -246,8 +255,8 @@ while solver.proceed and good_solution:
         Ro_avg = flow.volume_integral('Ro')/vol
         PE_avg = flow.volume_integral('PE')/vol
         Lz_avg = flow.volume_integral('Lz')/vol
-        one_avg = flow.volume_integral('one')/vol
-        logger.info("one = {}".format(one_avg))
+        # one_avg = flow.volume_integral('one')/vol
+        # logger.info("one = {}".format(one_avg))
         τ_u_m = flow.max('|τ_u|')
         τ_s_m = flow.max('|τ_s|')
         log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
@@ -257,6 +266,7 @@ while solver.proceed and good_solution:
         logger.info(log_string)
 
         good_solution = np.isfinite(E0)
+
     if solver.iteration % hermitian_cadence in timestepper_history:
         for field in solver.state:
             field.require_grid_space()
@@ -267,7 +277,7 @@ end_time = time.time()
 startup_time = main_start - start_time
 main_loop_time = end_time - main_start
 DOF = Nφ*Nθ*Nr
-niter = solver.iteration
+niter = solver.iteration - startup_iter
 if rank==0:
     print('performance metrics:')
     print('    startup time   : {:}'.format(startup_time))
