@@ -148,8 +148,9 @@ r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
 r_vec['g'][2] = r
 
 # Entropy source function; here constant volume heating rate
-source = d.Field(name='S', bases=b)
-source['g'] = 3
+source_func = d.Field(name='S', bases=b)
+source_func['g'] =  Ek/Pr*3
+source = de.Grid(source_func).evaluate()
 
 # for boundary condition
 e = grad(u) + trans(grad(u))
@@ -160,7 +161,7 @@ problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
                       - cross(curl(u) + ez, u) ))
 problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + LiftTau(τ_s,-1),
-                     - dot(u, grad(s)) + Ek/Pr*source ))
+                     - dot(u, grad(s)) +source ))
 # Boundary conditions
 problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
 problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")

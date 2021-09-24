@@ -166,8 +166,9 @@ r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
 r_vec['g'][2] = r
 
 # Entropy source function, inspired from MESA model
-source = d.Field(bases=b, name='source')
-source['g'] = 3
+source_func = d.Field(name='S', bases=b)
+source_func['g'] =  Ek/Pr*3
+source = de.Grid(source_func).evaluate()
 
 e = grad(u) + trans(grad(u))
 e.store_last = True
@@ -180,7 +181,7 @@ problem.add_equation((div(u), 0))
 problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u,-1),
                       - cross(curl(u) + ez, u) + cross(J,B) ))
 problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s,-1),
-                      - dot(u, grad(s)) + Ek/Pr*source ))
+                      - dot(u, grad(s)) + source ))
 problem.add_equation((div(A), 0)) # coulomb gauge
 problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A,-1),
                         cross(u, B) ))
