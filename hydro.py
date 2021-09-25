@@ -212,10 +212,6 @@ flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
 flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
 flow.add_property(np.abs(τ_s), name='|τ_s|')
-# one = d.Field(name='one', bases=b)
-# one.require_scales(L_dealias)
-# one['g'] = 1 #0.5*(1-r**2)
-# flow.add_property(one, name='one')
 
 max_dt = float(args['--max_dt'])
 if args['--fixed_dt']:
@@ -257,8 +253,6 @@ while solver.proceed and good_solution:
         Ro_avg = flow.volume_integral('Ro')/vol
         PE_avg = flow.volume_integral('PE')/vol
         Lz_avg = flow.volume_integral('Lz')/vol
-        # one_avg = flow.volume_integral('one')/vol
-        # logger.info("one = {}".format(one_avg))
         τ_u_m = flow.max('|τ_u|')
         τ_s_m = flow.max('|τ_s|')
         log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
