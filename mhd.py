@@ -174,7 +174,7 @@ e = grad(u) + trans(grad(u))
 e.store_last = True
 
 B = curl(A)
-J = curl(B)
+J = -lap(A) #curl(B)
 
 problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
 problem.add_equation((div(u), 0))
