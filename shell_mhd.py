@@ -108,7 +108,9 @@ Nφ = Nθ*2
 
 ncc_cutoff = float(args['--ncc_cutoff'])
 
-radius = 1
+r_outer = radius = 1
+r_inner = float(args['--r_inner']])
+radii = [r_inner, r_outer]
 
 Ek = Ekman = float(args['--Ekman'])
 Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
@@ -118,24 +120,30 @@ Pm = MagneticPrandtl = float(args['--MagneticPrandtl'])
 logger.debug(sys.argv)
 logger.debug('-'*40)
 logger.info("Run parameters")
-logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}".format(Ek,Co2,Pr,Pm))
+logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}, r_i/r_o = {}".format(Ek,Co2,Pr,Pm, r_inner/r_outer))
 
 dealias = L_dealias = N_dealias = 3/2
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
-b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+b = de.SphericalShellBasis(c, (Nφ,Nθ,Nr), radiii=radii, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 phi, theta, r = b.local_grids()
+
+b_inner = b.S2_basis(radius=r_inner)
+b_outer = b.S2_basis(radius=r_outer)
 
 u = d.VectorField(c, name="u", bases=b)
 p = d.Field(name="p", bases=b)
 s = d.Field(name="s", bases=b)
 A = d.VectorField(c, name="A", bases=b)
 φ = d.Field(name="φ", bases=b)
-τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
-τ_s = d.Field(name="τ_s", bases=b.S2_basis())
-τ_A = d.VectorField(c, name="τ_A", bases=b.S2_basis())
+τ_u1 = d.VectorField(c, name="τ_u1", bases=b_outer)
+τ_s1 = d.Field(name="τ_s1", bases=b_outer)
+τ_A1 = d.VectorField(c, name="τ_A1", bases=b_outer)
+τ_u2 = d.VectorField(c, name="τ_u2", bases=b_inner)
+τ_s2 = d.Field(name="τ_s2", bases=b_inner)
+τ_A2 = d.VectorField(c, name="τ_A2", bases=b_inner)
 
 # Parameters and operators
 div = lambda A: de.Divergence(A, index=0)
@@ -154,10 +162,13 @@ Lift = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
 azavg = lambda A: de.Average(A, c.coords[0])
 shellavg = lambda A: de.Average(A, c.S2coordsys)
-avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
+avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*(r_outer**3-r_inner**3))
 
-ell_func = lambda ell: ell+1
-ellp1 = lambda A: de.SphericalEllProduct(A, c, ell_func)
+ell_funcp1 = lambda ell: ell+1
+ellp1 = lambda A: de.SphericalEllProduct(A, c, ell_funcp1)
+
+ell_func = lambda ell: ell
+ell = lambda A: de.SphericalEllProduct(A, c, ell_func)
 
 # NCCs and variables of the problem
 bk = b.clone_with(k=1) # ez on k+1 level to match curl(u)
@@ -179,22 +190,29 @@ e.store_last = True
 B = curl(A)
 J = -lap(A) #curl(B)
 
-problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
+problem = de.IVP([p, u,  τ_u1, τ_u2, s,  τ_s1, τ_s2, φ, A, τ_A1, τ_A2])
 problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u,-1),
+problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u2,-2) + Lift(τ_u1,-1),
                       - cross(curl(u) + ez, u) + cross(J,B) ))
-problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s,-1),
+problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s2,-2)+ Lift(τ_s1,-1),
                       - dot(u, grad(s)) + source ))
 problem.add_equation((div(A), 0)) # coulomb gauge
-problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A,-1),
+problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A2,-2) + Lift(τ_A1,-1),
                         cross(u, B) ))
 # Boundary conditions
-problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
-problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")
-problem.add_equation((radial(angular(e(r=radius))), 0))
-problem.add_equation((s(r=radius), 0))
-problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
-problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+problem.add_equation((radial(u(r=r_outer)), 0), condition = "ntheta != 0")
+problem.add_equation((p(r=r_outer), 0), condition = "ntheta == 0")
+problem.add_equation((radial(angular(e(r=r_outer))), 0))
+problem.add_equation((s(r=r_outer), 0))
+problem.add_equation((radial(grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0), condition = "ntheta != 0")
+problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
+#inner boundary
+problem.add_equation((radial(u(r=r_inner)), 0))
+problem.add_equation((radial(angular(e(r=r_inner))), 0))
+problem.add_equation((s(r=r_inner), 0)) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
+problem.add_equation((radial(grad(A)(r=r_outer))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
+
+
 
 logger.info("Problem built")
 
@@ -217,7 +235,7 @@ else:
     noise.low_pass_filter(scales=0.25)
     s['g'] += amp*noise['g']
 
-
+#TODO: update MHD ICs to something sensible
 mag_amp = 1e-4
 invert_B_to_A = False
 if invert_B_to_A:
@@ -228,11 +246,15 @@ if invert_B_to_A:
                                  ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
                                  +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
     logger.info("set initial conditions for B")
-    IC_problem = de.LBVP([φ, A, τ_A])
+    IC_problem = de.LBVP([φ, A, τ_A1, τ_A2])
     IC_problem.add_equation((div(A), 0))
-    IC_problem.add_equation((curl(A) + grad(φ) + Lift(τ_A, -1), B_IC))
-    IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
-    IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+    IC_problem.add_equation((curl(A) + grad(φ) + Lift(τ_A2, -2) + Lift(τ_A1, -1), B_IC))
+    IC_problem.add_equation((radial(grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0), condition = "ntheta != 0")
+    IC_problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
+    #inner boundary
+    IC_problem.add_equation((radial(grad(A)(r=r_outer))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
+
+
     IC_solver = IC_problem.build_solver()
     IC_solver.solve()
     logger.info("solved for initial conditions for A")
