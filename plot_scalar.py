@@ -112,7 +112,8 @@ ax_r.set_yscale('log') # relies on it being the last instance; poor practice
 fig_f.savefig('{:s}/Re_and_Ro.pdf'.format(str(output_path)))
 
 
-benchmark_set = ['KE', 'Re', 'Ro']
+benchmark_set = ['KE', 'ME', 'ME/KE', 'Re', 'Ro']
+data['ME/KE'] = data['ME']/data['KE']
 i_ten = int(0.9*data[benchmark_set[0]].shape[0])
 for benchmark in benchmark_set:
     print("{:s} benchmark {:14.12g} +- {:4.2g} (averaged from {:g}-{:g})".format(benchmark, np.mean(data[benchmark][i_ten:]), np.std(data[benchmark][i_ten:]), t[i_ten], t[-1]))

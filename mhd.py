@@ -24,6 +24,8 @@ Options:
     --safety=<safety>                    CFL safety factor [default: 0.4]
     --fixed_dt                           Fix timestep size
 
+    --slice_dt=<slice_dt>                Cadence at which to output slices, in rotation times [default: 10]
+
     --run_time_diffusion=<run_time_d>    How long to run, in diffusion times [default: 20]
     --run_time_rotation=<run_time_rot>   How long to run, in rotation timescale; overrides run_time_diffusion if set
     --run_time_iter=<run_time_i>         How long to run, in iterations
@@ -299,7 +301,8 @@ Aφ = dot(A, eφ)
 ρ_cyl['g'] = r*np.sin(theta)
 Ωz = dot(u, eφ)/ρ_cyl # this is not ω_z; misses gradient terms; this is angular differential rotation.
 
-slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = 10, max_writes = 10, virtual_file=True, mode=mode)
+slice_dt = float(args['--slice_dt'])
+slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = slice_dt, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
 slices.add_task(enstrophy(theta=np.pi/2), name='enstrophy')
 slices.add_task(azavg(Bφ), name='<Bφ>')
