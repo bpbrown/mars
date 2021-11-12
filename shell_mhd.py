@@ -109,8 +109,8 @@ Nφ = Nθ*2
 ncc_cutoff = float(args['--ncc_cutoff'])
 
 r_outer = radius = 1
-r_inner = float(args['--r_inner']])
-radii = [r_inner, r_outer]
+r_inner = float(args['--r_inner'])
+radii = (r_inner, r_outer)
 
 Ek = Ekman = float(args['--Ekman'])
 Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
@@ -127,7 +127,7 @@ dealias = L_dealias = N_dealias = 3/2
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
-b = de.SphericalShellBasis(c, (Nφ,Nθ,Nr), radiii=radii, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+b = de.ShellBasis(c, (Nφ,Nθ,Nr), radii=radii, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 b_inner = b.S2_basis(radius=r_inner)
@@ -138,12 +138,12 @@ p = d.Field(name="p", bases=b)
 s = d.Field(name="s", bases=b)
 A = d.VectorField(c, name="A", bases=b)
 φ = d.Field(name="φ", bases=b)
-τ_u1 = d.VectorField(c, name="τ_u1", bases=b_outer)
-τ_s1 = d.Field(name="τ_s1", bases=b_outer)
-τ_A1 = d.VectorField(c, name="τ_A1", bases=b_outer)
-τ_u2 = d.VectorField(c, name="τ_u2", bases=b_inner)
-τ_s2 = d.Field(name="τ_s2", bases=b_inner)
-τ_A2 = d.VectorField(c, name="τ_A2", bases=b_inner)
+τ_u1 = d.VectorField(c, name="τ_u1", bases=(b_outer))
+τ_s1 = d.Field(name="τ_s1", bases=(b_outer))
+τ_A1 = d.VectorField(c, name="τ_A1", bases=(b_outer))
+τ_u2 = d.VectorField(c, name="τ_u2", bases=(b_inner))
+τ_s2 = d.Field(name="τ_s2", bases=(b_inner))
+τ_A2 = d.VectorField(c, name="τ_A2", bases=(b_inner))
 
 # Parameters and operators
 div = lambda A: de.Divergence(A, index=0)
@@ -209,8 +209,8 @@ problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
 #inner boundary
 problem.add_equation((radial(u(r=r_inner)), 0))
 problem.add_equation((radial(angular(e(r=r_inner))), 0))
-problem.add_equation((s(r=r_inner), 0)) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
-problem.add_equation((radial(grad(A)(r=r_outer))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
+problem.add_equation((s(r=r_inner), 0))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
+problem.add_equation((radial(grad(A)(r=r_inner))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
 
 
 
@@ -346,9 +346,12 @@ flow.add_property(KE, name='KE')
 flow.add_property(ME, name='ME')
 flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
-flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
-flow.add_property(np.abs(τ_s), name='|τ_s|')
-flow.add_property(np.sqrt(dot(τ_A,τ_A)), name='|τ_A|')
+flow.add_property(np.sqrt(dot(τ_u1,τ_u1)), name='|τ_u|')
+flow.add_property(np.sqrt(dot(τ_u2,τ_u2)), name='|τ_u2|')
+flow.add_property(np.abs(τ_s1), name='|τ_s|')
+flow.add_property(np.abs(τ_s2), name='|τ_s2|')
+flow.add_property(np.sqrt(dot(τ_A1,τ_A1)), name='|τ_A|')
+flow.add_property(np.sqrt(dot(τ_A2,τ_A2)), name='|τ_A2|')
 
 cfl_safety_factor = float(args['--safety'])
 timestepper_history = [0,1]
