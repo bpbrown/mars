@@ -209,7 +209,8 @@ problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
 #inner boundary
 problem.add_equation((radial(u(r=r_inner)), 0))
 problem.add_equation((radial(angular(e(r=r_inner))), 0))
-problem.add_equation((s(r=r_inner), 0.5*(1-r_inner**2))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
+#problem.add_equation((s(r=r_inner), 0.5*(1-r_inner**2))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
+problem.add_equation((radial(grad(s)(r=r_inner)), -r_inner)) # fixed flux with solution matching ball heating
 problem.add_equation((radial(grad(A)(r=r_inner))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
 
 
