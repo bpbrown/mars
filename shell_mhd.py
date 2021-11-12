@@ -209,7 +209,7 @@ problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
 #inner boundary
 problem.add_equation((radial(u(r=r_inner)), 0))
 problem.add_equation((radial(angular(e(r=r_inner))), 0))
-problem.add_equation((s(r=r_inner), 0))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
+problem.add_equation((s(r=r_inner), 0.5*(1-r_inner**2))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
 problem.add_equation((radial(grad(A)(r=r_inner))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
 
 
@@ -220,8 +220,7 @@ logger.info("Problem built")
 solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
-if args['--thermal_eq']:
-    s['g'] = float(args['--scale_eq'])*0.5*(1-r**2) # static solution
+s['g'] = 0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
