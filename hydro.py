@@ -282,3 +282,4 @@ if rank==0:
     print('    wall time/iter : {:f}'.format(main_loop_time/niter))
     print('          iter/sec : {:f}'.format(niter/main_loop_time))
     print('DOF-cycles/cpu-sec : {:}'.format(DOF*niter/(ncpu*main_loop_time)))
+solver.log_stats()
