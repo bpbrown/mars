@@ -106,13 +106,13 @@ Co2 = ConvectiveRossbySq = float(args['--ConvectiveRossbySq'])
 Pr = Prandtl = float(args['--Prandtl'])
 logger.info("Ek = {}, Co2 = {}, Pr = {}".format(Ek,Co2,Pr))
 
-L_dealias = 3/2
-N_dealias = 3/2
+dealias = 3/2
+
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor(c, mesh=mesh, dtype=np.float64)
-b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=dealias, dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 u = d.VectorField(c, name='u', bases=b)
