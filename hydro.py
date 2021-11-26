@@ -111,13 +111,14 @@ N_dealias = 3/2
 
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
-d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
+d = de.Distributor(c, mesh=mesh, dtype=np.float64)
 b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 u = d.VectorField(c, name='u', bases=b)
 p = d.Field(name='p', bases=b)
 s = d.Field(name='s', bases=b)
+τ_p = d.Field(name="τ_p")
 τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
 τ_s = d.Field(name="τ_s", bases=b.S2_basis())
 
@@ -132,15 +133,14 @@ ddt = lambda A: de.TimeDerivative(A)
 trans = lambda A: de.TransposeComponents(A)
 radial = lambda A: de.RadialComponent(A)
 angular = lambda A: de.AngularComponent(A, index=1)
-trace = lambda A: de.Trace(A)
-power = lambda A, B: de.Power(A, B)
-LiftTau = lambda A, n: de.LiftTau(A,b,n)
+lift_basis = b #b.clone_with(k=2)
+lift = lambda A, n: de.LiftTau(A, b, n)
 integ = lambda A: de.Integrate(A, c)
 avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
 
 # NCCs and variables of the problem
-bk = b.clone_with(k=1) # ez on k+1 level to match curl(u)
-ez = d.VectorField(c, name='ez', bases=bk)
+bk1 = b.clone_with(k=1) # ez on k+1 level to match curl(u)
+ez = d.VectorField(c, name='ez', bases=bk1)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 
@@ -156,17 +156,17 @@ source = de.Grid(source_func).evaluate()
 e = grad(u) + trans(grad(u))
 e.store_last = True
 
-problem = de.IVP([p, u,  τ_u, s,  τ_s])
-problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + LiftTau(τ_u,-1),
+problem = de.IVP([p, u, s, τ_p, τ_u, τ_s])
+problem.add_equation((div(u) + τ_p, 0))
+problem.add_equation((ddt(u) + grad(p)  - Ek*lap(u) - Co2*r_vec*s + lift(τ_u,-1),
                       - cross(curl(u) + ez, u) ))
-problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + LiftTau(τ_s,-1),
-                     - dot(u, grad(s)) +source ))
+problem.add_equation((ddt(s) - Ek/Pr*(lap(s)) + lift(τ_s,-1),
+                     - dot(u, grad(s)) + source ))
 # Boundary conditions
-problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
-problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")
+problem.add_equation((radial(u(r=radius)), 0))
 problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
+problem.add_equation((integ(p), 0))  # Pressure gauge
 logger.info("Problem built")
 
 s['g'] = 0.5*(1-r**2) # static solution
@@ -188,7 +188,7 @@ else:
 solver = problem.build_solver(timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
 
 KE = 0.5*dot(u,u)
-ens = dot(curl(u),curl(u))
+KE.store_last = True
 PE = Co2*s
 Lz = dot(cross(r_vec,u), ez)
 enstrophy = dot(curl(u),curl(u))
@@ -197,7 +197,7 @@ enstrophy.store_last = True
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf)
 traces.add_task(avg(KE), name='KE')
 traces.add_task(integ(KE)/Ek**2, name='E0')
-traces.add_task(np.sqrt(avg(ens)), name='Ro')
+traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
 traces.add_task(np.sqrt(2/Ek*avg(KE)), name='Re')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
@@ -212,6 +212,7 @@ flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
 flow.add_property(np.sqrt(dot(τ_u,τ_u)), name='|τ_u|')
 flow.add_property(np.abs(τ_s), name='|τ_s|')
+flow.add_property(np.abs(τ_p), name='|τ_p|')
 
 max_dt = float(args['--max_dt'])
 if args['--fixed_dt']:
@@ -263,7 +264,7 @@ while solver.proceed and good_solution:
 
         good_solution = np.isfinite(E0)
 
-    if solver.iteration % hermitian_cadence in timestepper_history:
+    if solver.iteration % hermitian_cadence in timestepper_history and solver.iteration > 0:
         for field in solver.state:
             field.require_grid_space()
     solver.step(dt)
