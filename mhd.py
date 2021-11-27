@@ -132,8 +132,10 @@ p = d.Field(name="p", bases=b)
 s = d.Field(name="s", bases=b)
 A = d.VectorField(c, name="A", bases=b)
 φ = d.Field(name="φ", bases=b)
-τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
+τ_p = d.Field(name="τ_p")
+τ_φ = d.Field(name="τ_φ")
 τ_s = d.Field(name="τ_s", bases=b.S2_basis())
+τ_u = d.VectorField(c, name="τ_u", bases=b.S2_basis())
 τ_A = d.VectorField(c, name="τ_A", bases=b.S2_basis())
 
 # Parameters and operators
@@ -149,7 +151,7 @@ radial = lambda A: de.RadialComponent(A)
 angular = lambda A: de.AngularComponent(A, index=1)
 trace = lambda A: de.Trace(A)
 power = lambda A, B: de.Power(A, B)
-Lift = lambda A, n: de.LiftTau(A,b,n)
+lift = lambda A, n: de.LiftTau(A,b,n)
 integ = lambda A: de.Integrate(A, c)
 azavg = lambda A: de.Average(A, c.coords[0])
 shellavg = lambda A: de.Average(A, c.S2coordsys)
@@ -178,22 +180,22 @@ e.store_last = True
 B = curl(A)
 J = -lap(A) #curl(B)
 
-problem = de.IVP([p, u,  τ_u, s,  τ_s, φ, A, τ_A])
-problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u,-1),
+problem = de.IVP([p, u, s, φ, A, τ_p, τ_u, τ_s, τ_φ, τ_A])
+problem.add_equation((div(u) + τ_p, 0))
+problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + lift(τ_u,-1),
                       - cross(curl(u) + ez, u) + cross(J,B) ))
-problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s,-1),
+problem.add_equation((ddt(s) - Ek/Pr*lap(s) + lift(τ_s,-1),
                       - dot(u, grad(s)) + source ))
-problem.add_equation((div(A), 0)) # coulomb gauge
-problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A,-1),
+problem.add_equation((div(A) + τ_φ, 0)) # coulomb gauge
+problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + lift(τ_A,-1),
                         cross(u, B) ))
 # Boundary conditions
-problem.add_equation((radial(u(r=radius)), 0), condition = "ntheta != 0")
-problem.add_equation((p(r=radius), 0), condition = "ntheta == 0")
+problem.add_equation((integ(p), 0))
+problem.add_equation((radial(u(r=radius)), 0))
 problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
-problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
-problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+problem.add_equation((integ(φ), 0))
+problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0))
 
 logger.info("Problem built")
 
@@ -289,6 +291,11 @@ traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
 traces.add_task(np.sqrt(avg(KE)*2)/Ek, name='Re')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
+traces.add_task(np.abs(τ_p), name='τ_p')
+traces.add_task(np.abs(τ_φ), name='τ_φ')
+traces.add_task(shellavg(np.abs(τ_s)), name='τ_s')
+traces.add_task(shellavg(np.sqrt(dot(τ_u,τ_u))), name='τ_u')
+traces.add_task(shellavg(np.sqrt(dot(τ_A,τ_A))), name='τ_A')
 
 # Analysis
 eφ = d.VectorField(c, bases=b)
@@ -328,8 +335,6 @@ flow.add_property(np.abs(τ_s), name='|τ_s|')
 flow.add_property(np.sqrt(dot(τ_A,τ_A)), name='|τ_A|')
 
 cfl_safety_factor = float(args['--safety'])
-timestepper_history = [0,1]
-hermitian_cadence = 100
 CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 CFL.add_velocity(B)
@@ -341,8 +346,6 @@ else:
 
 if args['--run_time_iter']:
     solver.stop_iteration = int(float(args['--run_time_iter']))
-
-logger.info("avg div A: {}".format(avg(div(A)).evaluate()['g']))
 
 startup_iter = 10
 good_solution = True
@@ -369,10 +372,6 @@ while solver.proceed and good_solution:
         logger.info(log_string)
 
         good_solution = np.isfinite(E0)
-
-    if solver.iteration % hermitian_cadence in timestepper_history:
-        for field in solver.state:
-            field.require_grid_space()
     solver.step(dt)
 
 end_time = time.time()
