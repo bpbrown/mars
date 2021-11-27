@@ -137,6 +137,7 @@ lift_basis = b #b.clone_with(k=2)
 lift = lambda A, n: de.LiftTau(A, b, n)
 integ = lambda A: de.Integrate(A, c)
 avg = lambda A: de.Integrate(A, c)/(4/3*np.pi*radius**3)
+shellavg = lambda A: de.Average(A, c.S2coordsys)
 
 # NCCs and variables of the problem
 bk1 = b.clone_with(k=1) # ez on k+1 level to match curl(u)
@@ -185,7 +186,7 @@ else:
     s['g'] += amp*noise['g']
 
 # Solver
-solver = problem.build_solver(timesteppers.SBDF2, ncc_cutoff=ncc_cutoff)
+solver = problem.build_solver(timesteppers.SBDF4, ncc_cutoff=ncc_cutoff)
 
 KE = 0.5*dot(u,u)
 KE.store_last = True
@@ -201,7 +202,9 @@ traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
 traces.add_task(np.sqrt(2/Ek*avg(KE)), name='Re')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
-
+traces.add_task(shellavg(np.sqrt(dot(τ_u,τ_u))), name='τ_u')
+traces.add_task(shellavg(np.abs(τ_s)), name='τ_s')
+traces.add_task(np.abs(τ_p), name='τ_p')
 
 report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
