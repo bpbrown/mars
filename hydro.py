@@ -112,7 +112,7 @@ dealias = 3/2
 start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor(c, mesh=mesh, dtype=np.float64)
-b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=dealias, dtype=np.float64)
+b = de.BallBasis(c, shape=(Nφ,Nθ,Nr), radius=radius, dealias=dealias, dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 u = d.VectorField(c, name='u', bases=b)
@@ -226,8 +226,6 @@ else:
     mode = 'append'
 
 cfl_safety_factor = float(args['--safety'])
-timestepper_history = [0,1]
-hermitian_cadence = 100
 CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 
@@ -261,14 +259,8 @@ while solver.proceed and good_solution:
         log_string += ", Re={:.1e}, Ro={:.1e}".format(Re_avg, Ro_avg)
         log_string += ", Lz={:.1e}, τ=({:.1e},{:.1e})".format(Lz_avg, τ_u_m, τ_s_m)
         logger.info(log_string)
-
         good_solution = np.isfinite(E0)
-
-    if solver.iteration % hermitian_cadence in timestepper_history and solver.iteration > 0:
-        for field in solver.state:
-            field.require_grid_space()
     solver.step(dt)
-
 end_time = time.time()
 
 startup_time = main_start - start_time
