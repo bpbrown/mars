@@ -169,6 +169,10 @@ ez['g'][2] =  np.cos(theta)
 r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
 r_vec['g'][2] = r
 
+r_S2 = d.VectorField(c)
+r_S2['g'][2] = 1
+
+
 # Entropy source function, inspired from MESA model
 source_func = d.Field(name='S', bases=b)
 source_func['g'] =  Ek/Pr*3
@@ -195,7 +199,7 @@ problem.add_equation((radial(u(r=radius)), 0))
 problem.add_equation((radial(angular(e(r=radius))), 0))
 problem.add_equation((s(r=radius), 0))
 problem.add_equation((integ(φ), 0))
-problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0))
+problem.add_equation((dot(r_S2, grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0))
 
 logger.info("Problem built")
 
