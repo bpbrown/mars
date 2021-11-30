@@ -34,11 +34,11 @@ Options:
     --label=<label>                      Additional label for run output directory
 
     --ncc_cutoff=<ncc_cutoff>            Amplitude to truncate NCC terms [default: 1e-10]
-    --debug                              Produce debugging output for NCCs
+    --plot_sparse                        Plot sparsity structures for L+M and it's LU decomposition
+
 """
 import numpy as np
 from mpi4py import MPI
-import time
 
 import pathlib
 import os
@@ -76,7 +76,6 @@ with Sync() as sync:
             os.mkdir(logdir)
 
 import dedalus.public as de
-from dedalus.core import timesteppers, operators
 from dedalus.extras import flow_tools
 
 comm = MPI.COMM_WORLD
@@ -108,8 +107,6 @@ logger.info("Ek = {}, Co2 = {}, Pr = {}".format(Ek,Co2,Pr))
 
 dealias = 3/2
 
-
-start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
 d = de.Distributor(c, mesh=mesh, dtype=np.float64)
 b = de.BallBasis(c, shape=(Nφ,Nθ,Nr), radius=radius, dealias=dealias, dtype=np.float64)
@@ -186,7 +183,7 @@ else:
     s['g'] += amp*noise['g']
 
 # Solver
-solver = problem.build_solver(timesteppers.SBDF4, ncc_cutoff=ncc_cutoff)
+solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 KE = 0.5*dot(u,u)
 KE.store_last = True
@@ -240,12 +237,9 @@ else:
 if args['--run_time_iter']:
     solver.stop_iteration = int(float(args['--run_time_iter']))
 
-startup_iter = 10
 good_solution = True
 vol = 4*np.pi/3
 while solver.proceed and good_solution:
-    if solver.iteration == startup_iter:
-        main_start = time.time()
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
@@ -264,18 +258,49 @@ while solver.proceed and good_solution:
         logger.info(log_string)
         good_solution = np.isfinite(E0)
     solver.step(dt)
-end_time = time.time()
 
-startup_time = main_start - start_time
-main_loop_time = end_time - main_start
-DOF = Nφ*Nθ*Nr
-niter = solver.iteration - startup_iter
-if rank==0:
-    print('performance metrics:')
-    print('    startup time   : {:}'.format(startup_time))
-    print('    main loop time : {:}'.format(main_loop_time))
-    print('    main loop iter : {:d}'.format(niter))
-    print('    wall time/iter : {:f}'.format(main_loop_time/niter))
-    print('          iter/sec : {:f}'.format(niter/main_loop_time))
-    print('DOF-cycles/cpu-sec : {:}'.format(DOF*niter/(ncpu*main_loop_time)))
 solver.log_stats()
+
+if args['--plot_sparse']:
+    # Plot matrices
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    # Plot options
+    fig = plt.figure(figsize=(9,3))
+    cmap = matplotlib.cm.get_cmap("winter_r")
+    clim = (-10, 0)
+    lim_margin = 0.05
+
+    def plot_sparse(A):
+        I, J = A.shape
+        A_mag = np.log10(np.abs(A.A))
+        ax.pcolor(A_mag[::-1], cmap=cmap, vmin=clim[0], vmax=clim[1])
+        ax.set_xlim(-lim_margin, I+lim_margin)
+        ax.set_ylim(-lim_margin, J+lim_margin)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect('equal', 'box')
+        ax.text(0.95, 0.95, 'nnz: %i' %A.nnz, horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+        ax.text(0.95, 0.95, '\ncon: %.1e' %np.linalg.cond(A.A), horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+
+    for sp in solver.subproblems:
+        m = sp.group[0]
+        # Plot LHS
+        ax = fig.add_subplot(1, 3, 1)
+        LHS = (sp.M_min + sp.L_min) @ sp.pre_right
+        plot_sparse(LHS)
+        ax.set_title('LHS (m = %i)' %m)
+        # Plot L
+        ax = fig.add_subplot(1, 3, 2)
+        L = sp.LHS_solver.LU.L
+        plot_sparse(L)
+        ax.set_title('L (m = %i)' %m)
+        # Plot U
+        ax = fig.add_subplot(1, 3, 3)
+        U = sp.LHS_solver.LU.U
+        plot_sparse(U)
+        ax.set_title('U (m = %i)' %m)
+        plt.tight_layout()
+        plt.savefig(data_dir+"/m_%i.pdf" %m)
+        fig.clear()
