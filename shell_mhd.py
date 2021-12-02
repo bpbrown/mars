@@ -45,7 +45,6 @@ Options:
 import numpy as np
 from dedalus.tools.parallel import Sync
 from mpi4py import MPI
-import time
 
 import pathlib
 import os
@@ -122,27 +121,29 @@ logger.debug('-'*40)
 logger.info("Run parameters")
 logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}, r_i/r_o = {}".format(Ek,Co2,Pr,Pm, r_inner/r_outer))
 
-dealias = L_dealias = N_dealias = 3/2
+dealias = 3/2
 
-start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
-d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
-b = de.ShellBasis(c, (Nφ,Nθ,Nr), radii=radii, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+d = de.Distributor(c, mesh=mesh, dtype=np.float64)
+b = de.ShellBasis(c, (Nφ,Nθ,Nr), radii=radii, dealias=dealias, dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 b_inner = b.S2_basis(radius=r_inner)
 b_outer = b.S2_basis(radius=r_outer)
 
-u = d.VectorField(c, name="u", bases=b)
 p = d.Field(name="p", bases=b)
 s = d.Field(name="s", bases=b)
-A = d.VectorField(c, name="A", bases=b)
 φ = d.Field(name="φ", bases=b)
-τ_u1 = d.VectorField(c, name="τ_u1", bases=(b_outer))
+u = d.VectorField(c, name="u", bases=b)
+A = d.VectorField(c, name="A", bases=b)
+
+τ_p = d.Field(name="τ_p")
+τ_φ = d.Field(name="τ_φ")
 τ_s1 = d.Field(name="τ_s1", bases=(b_outer))
-τ_A1 = d.VectorField(c, name="τ_A1", bases=(b_outer))
-τ_u2 = d.VectorField(c, name="τ_u2", bases=(b_inner))
 τ_s2 = d.Field(name="τ_s2", bases=(b_inner))
+τ_u1 = d.VectorField(c, name="τ_u1", bases=(b_outer))
+τ_u2 = d.VectorField(c, name="τ_u2", bases=(b_inner))
+τ_A1 = d.VectorField(c, name="τ_A1", bases=(b_outer))
 τ_A2 = d.VectorField(c, name="τ_A2", bases=(b_inner))
 
 # Parameters and operators
@@ -158,7 +159,8 @@ radial = lambda A: de.RadialComponent(A)
 angular = lambda A: de.AngularComponent(A, index=1)
 trace = lambda A: de.Trace(A)
 power = lambda A, B: de.Power(A, B)
-Lift = lambda A, n: de.LiftTau(A,b,n)
+bk2 = b.clone_with(k=2)
+lift = lambda A, n: de.LiftTau(A, bk2, n)
 integ = lambda A: de.Integrate(A, c)
 azavg = lambda A: de.Average(A, c.coords[0])
 shellavg = lambda A: de.Average(A, c.S2coordsys)
@@ -176,8 +178,11 @@ ez = d.VectorField(c, name='ez', bases=bk)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 
-r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
+r_vec = d.VectorField(c, name='r_vec', bases=bk2.radial_basis)
 r_vec['g'][2] = r
+
+r_S2 = d.VectorField(c, name='r_S2')
+r_S2['g'][2] = 1
 
 # Entropy source function, inspired from MESA model
 source_func = d.Field(name='S', bases=b)
@@ -190,30 +195,29 @@ e.store_last = True
 B = curl(A)
 J = -lap(A) #curl(B)
 
-problem = de.IVP([p, u,  τ_u1, τ_u2, s,  τ_s1, τ_s2, φ, A, τ_A1, τ_A2])
-problem.add_equation((div(u), 0))
-problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + Lift(τ_u2,-2) + Lift(τ_u1,-1),
+problem = de.IVP([p, τ_p, u,  τ_u1, τ_u2, s,  τ_s1, τ_s2, φ, τ_φ, A, τ_A1, τ_A2])
+problem.add_equation((div(u) + τ_p, 0))
+problem.add_equation((ddt(u) + grad(p) - Ek*lap(u) - Co2*r_vec*s + lift(τ_u2,-2) + lift(τ_u1,-1),
                       - cross(curl(u) + ez, u) + cross(J,B) ))
-problem.add_equation((ddt(s) - Ek/Pr*lap(s) + Lift(τ_s2,-2)+ Lift(τ_s1,-1),
+problem.add_equation((ddt(s) - Ek/Pr*lap(s) + lift(τ_s2,-2) + lift(τ_s1,-1),
                       - dot(u, grad(s)) + source ))
-problem.add_equation((div(A), 0)) # coulomb gauge
-problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + Lift(τ_A2,-2) + Lift(τ_A1,-1),
+problem.add_equation((div(A) + τ_φ, 0)) # coulomb gauge
+problem.add_equation((ddt(A) + grad(φ) - Ek/Pm*lap(A) + lift(τ_A2,-2) + lift(τ_A1,-1),
                         cross(u, B) ))
 # Boundary conditions
-problem.add_equation((radial(u(r=r_outer)), 0), condition = "ntheta != 0")
-problem.add_equation((p(r=r_outer), 0), condition = "ntheta == 0")
+problem.add_equation((integ(p), 0))
+problem.add_equation((radial(u(r=r_outer)), 0))
 problem.add_equation((radial(angular(e(r=r_outer))), 0))
 problem.add_equation((s(r=r_outer), 0))
-problem.add_equation((radial(grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0), condition = "ntheta != 0")
-problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
+problem.add_equation((dot(r_S2,grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0))
+problem.add_equation((integ(φ), 0))
 #inner boundary
 problem.add_equation((radial(u(r=r_inner)), 0))
 problem.add_equation((radial(angular(e(r=r_inner))), 0))
-#problem.add_equation((s(r=r_inner), 0.5*(1-r_inner**2))) # TODO: go to fixed flux that's adjusted to account for interior flux that's cut out by cutout.
-problem.add_equation((radial(grad(s)(r=r_inner)), -r_inner)) # fixed flux with solution matching ball heating
-problem.add_equation((radial(grad(A)(r=r_inner))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
-
-
+#problem.add_equation((s(r=r_inner), 0))
+problem.add_equation((dot(r_S2,grad(s)(r=r_inner)), -r_inner)) # fixed flux with solution matching ball heating
+problem.add_equation((dot(r_S2,grad(A)(r=r_inner))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
+#problem.add_equation((J(r=r_inner),0))
 
 logger.info("Problem built")
 
@@ -249,11 +253,10 @@ if invert_B_to_A:
     IC_problem = de.LBVP([φ, A, τ_A1, τ_A2])
     IC_problem.add_equation((div(A), 0))
     IC_problem.add_equation((curl(A) + grad(φ) + Lift(τ_A2, -2) + Lift(τ_A1, -1), B_IC))
-    IC_problem.add_equation((radial(grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0), condition = "ntheta != 0")
-    IC_problem.add_equation((φ(r=r_outer), 0), condition = "ntheta == 0")
+    IC_problem.add_equation((radial(grad(A)(r=r_outer))+ellp1(A)(r=r_outer)/r_outer, 0))
+    IC_problem.add_equation((integ(φ), 0))
     #inner boundary
     IC_problem.add_equation((radial(grad(A)(r=r_outer))-ell(A)(r=r_inner)/r_inner, 0)) #potential field innner BC
-
 
     IC_solver = IC_problem.build_solver()
     IC_solver.solve()
@@ -338,7 +341,7 @@ slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we
 checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
 checkpoint.add_tasks(solver.state)
 
-report_cadence = 100
+report_cadence = 10
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
 flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
 flow.add_property(np.sqrt(enstrophy), name='Ro')
@@ -354,8 +357,6 @@ flow.add_property(np.sqrt(dot(τ_A1,τ_A1)), name='|τ_A|')
 flow.add_property(np.sqrt(dot(τ_A2,τ_A2)), name='|τ_A2|')
 
 cfl_safety_factor = float(args['--safety'])
-timestepper_history = [0,1]
-hermitian_cadence = 100
 CFL = flow_tools.CFL(solver, initial_dt=dt, cadence=1, safety=cfl_safety_factor, max_dt=max_dt, threshold=0.1)
 CFL.add_velocity(u)
 CFL.add_velocity(B)
@@ -368,13 +369,8 @@ else:
 if args['--run_time_iter']:
     solver.stop_iteration = int(float(args['--run_time_iter']))
 
-logger.info("avg div A: {}".format(avg(div(A)).evaluate()['g']))
-
-startup_iter = 10
 good_solution = True
 while solver.proceed and good_solution:
-    if solver.iteration == startup_iter:
-        main_start = time.time()
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
@@ -396,22 +392,7 @@ while solver.proceed and good_solution:
 
         good_solution = np.isfinite(E0)
 
-    if solver.iteration % hermitian_cadence in timestepper_history:
-        for field in solver.state:
-            field.require_grid_space()
     solver.step(dt)
 
-end_time = time.time()
-
-startup_time = main_start - start_time
-main_loop_time = end_time - main_start
-DOF = Nφ*Nθ*Nr
-niter = solver.iteration - startup_iter
-if rank==0:
-    print('performance metrics:')
-    print('    startup time   : {:}'.format(startup_time))
-    print('    main loop time : {:}'.format(main_loop_time))
-    print('    main loop iter : {:d}'.format(niter))
-    print('    wall time/iter : {:f}'.format(main_loop_time/niter))
-    print('          iter/sec : {:f}'.format(niter/main_loop_time))
-    print('DOF-cycles/cpu-sec : {:}'.format(DOF*niter/(ncpu*main_loop_time)))
+solver.log_stats()
+logger.debug("mode-stages/DOF = {}".format(solver.total_modes/(Nφ*Nθ*Nr)))
