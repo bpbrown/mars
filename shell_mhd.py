@@ -66,6 +66,7 @@ dlog.setLevel(logging.ERROR)
 
 data_dir = sys.argv[0].split('.py')[0]
 data_dir += '_Co{}_Ek{}_Pr{}_Pm{}'.format(args['--ConvectiveRossbySq'],args['--Ekman'],args['--Prandtl'],args['--MagneticPrandtl'])
+data_dir += '_ri{}'.format(args['--r_inner'])
 data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
 if args['--benchmark']:
     data_dir += '_benchmark'
@@ -315,6 +316,15 @@ traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
 traces.add_task(np.sqrt(avg(KE)*2)/Ek, name='Re')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
+traces.add_task(np.abs(τ_p), name='τ_p')
+traces.add_task(np.abs(τ_φ), name='τ_φ')
+traces.add_task(shellavg(np.abs(τ_s1)), name='τ_s')
+traces.add_task(shellavg(np.sqrt(dot(τ_u1,τ_u1))), name='τ_u')
+traces.add_task(shellavg(np.sqrt(dot(τ_A1,τ_A1))), name='τ_A')
+traces.add_task(shellavg(np.abs(τ_s2)), name='τ_s2')
+traces.add_task(shellavg(np.sqrt(dot(τ_u2,τ_u2))), name='τ_u2')
+traces.add_task(shellavg(np.sqrt(dot(τ_A2,τ_A2))), name='τ_A2')
+
 
 # Analysis
 eφ = d.VectorField(c, bases=b)
@@ -336,6 +346,10 @@ slices.add_task(azavg(Aφ), name='<Aφ>')
 slices.add_task(azavg(Ωz), name='<Ωz>')
 slices.add_task(azavg(s), name='<s>')
 slices.add_task(shellavg(s), name='s(r)')
+slices.add_task(shellavg(dot(er, u)*(p-0.5*dot(u,u))), name='F_h(r)')
+slices.add_task(shellavg(dot(er, u)*dot(u,u)), name='F_KE(r)')
+slices.add_task(shellavg(-Co2*Ek/Pr*dot(er, grad(s))), name='F_κ(r)')
+slices.add_task(shellavg(Co2*source), name='F_source(r)')
 slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
 
 checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
@@ -349,10 +363,12 @@ flow.add_property(KE, name='KE')
 flow.add_property(ME, name='ME')
 flow.add_property(PE, name='PE')
 flow.add_property(Lz, name='Lz')
-flow.add_property(np.sqrt(dot(τ_u1,τ_u1)), name='|τ_u|')
-flow.add_property(np.sqrt(dot(τ_u2,τ_u2)), name='|τ_u2|')
+flow.add_property(np.abs(τ_p), name='|τ_p|')
+flow.add_property(np.abs(τ_φ), name='|τ_φ|')
 flow.add_property(np.abs(τ_s1), name='|τ_s|')
 flow.add_property(np.abs(τ_s2), name='|τ_s2|')
+flow.add_property(np.sqrt(dot(τ_u1,τ_u1)), name='|τ_u|')
+flow.add_property(np.sqrt(dot(τ_u2,τ_u2)), name='|τ_u2|')
 flow.add_property(np.sqrt(dot(τ_A1,τ_A1)), name='|τ_A|')
 flow.add_property(np.sqrt(dot(τ_A2,τ_A2)), name='|τ_A2|')
 
@@ -384,10 +400,17 @@ while solver.proceed and good_solution:
         τ_u_m = flow.max('|τ_u|')
         τ_s_m = flow.max('|τ_s|')
         τ_A_m = flow.max('|τ_A|')
+        τ_u2_m = flow.max('|τ_u2|')
+        τ_s2_m = flow.max('|τ_s2|')
+        τ_A2_m = flow.max('|τ_A2|')
+        τ_p_m = flow.max('|τ_p|')
+        τ_φ_m = flow.max('|τ_φ|')
+        τ_max = np.max([τ_u_m,τ_u2_m,τ_A_m,τ_A2_m,τ_s_m,τ_s2_m,τ_p_m,τ_φ_m])
+
         log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
         log_string += ", KE={:.2e}, ME={:.2e}, PE={:.2e}".format(KE_avg, ME_avg, PE_avg)
         log_string += ", Re={:.1e}, Ro={:.1e}".format(Re_avg, Ro_avg)
-        log_string += ", Lz={:.1e}, τ=({:.1e},{:.1e},{:.1e})".format(Lz_avg, τ_u_m, τ_s_m, τ_A_m)
+        log_string += ", Lz={:.1e}, τ={:.1e}".format(Lz_avg, τ_max)
         logger.info(log_string)
 
         good_solution = np.isfinite(E0)
