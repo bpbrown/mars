@@ -19,20 +19,18 @@ Options:
     --ell_benchmark=<ell_benchmark>      Integer value of benchmark perturbation m=+-ell [default: 3]
 
     --thermal_equilibrium                Start with thermally equilibrated (unstable) ICs
-    --scale_eq=<scale_eq>                Scalie unstable profile by fixed amount [default: 0.1]
+    --scale_eq=<scale_eq>                Scalie unstable profile by fixed amount [default: 1]
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
     --safety=<safety>                    CFL safety factor [default: 0.4]
     --fixed_dt                           Fix timestep size
 
-    --slice_dt=<slice_dt>                Cadence at which to output slices, in rotation times [default: 10]
-
     --run_time_diffusion=<run_time_d>    How long to run, in diffusion times [default: 20]
     --run_time_rotation=<run_time_rot>   How long to run, in rotation timescale; overrides run_time_diffusion if set
     --run_time_iter=<run_time_i>         How long to run, in iterations
 
-    --dt_output=<dt_output>              Time between outputs, in rotation times (P_rot = 4pi) [default: 2]
-    --scalar_dt_output=<dt_scalar_out>   Time between scalar outputs, in rotation times (P_rot = 4pi) [default: 2]
+    --slice_dt=<slice_dt>                Time between outputs, in rotation times (P_rot = 4pi) [default: 10]
+    --scalar_dt=<scalar_dt>              Time between scalar outputs, in rotation times (P_rot = 4pi) [default: 10]
 
     --restart=<restart>                  Merged chechpoint file to restart from.
                                          Make sure "--label" is set to avoid overwriting the previous run.
@@ -121,6 +119,7 @@ Pm = MagneticPrandtl = float(args['--MagneticPrandtl'])
 
 logger.debug(sys.argv)
 logger.debug('-'*40)
+logger.info("saving data in {}".format(data_dir))
 logger.info("Run parameters")
 logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}, r_i/r_o = {}".format(Ek,Co2,Pr,Pm, r_inner/r_outer))
 
@@ -312,7 +311,8 @@ ME.store_last = True
 enstrophy = dot(curl(u),curl(u))
 enstrophy.store_last = True
 
-traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=10, max_writes=np.inf, virtual_file=True, mode=mode)
+scalar_dt = float(args['--scalar_dt'])
+traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=scalar_dt, max_writes=np.inf, virtual_file=True, mode=mode)
 traces.add_task(avg(KE), name='KE')
 traces.add_task(avg(ME), name='ME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
