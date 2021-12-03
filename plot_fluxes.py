@@ -35,7 +35,7 @@ else:
     data_dir = case +'/'
     output_path = pathlib.Path(data_dir).absolute()
 
-fields = ['s(r)', 'F_h(r)', 'F_κ(r)', 'F_KE(r)', 'F_source(r)']
+fields = ['s(r)', 'F_h(r)', 'F_κ(r)', 'F_KE(r)', 'Q_source(r)']
 
 def accumulate_files(filename,start,count,file_list):
     if start==0:
@@ -87,7 +87,7 @@ fig_s.savefig('{:s}/thermal_profile.pdf'.format(str(output_path)))
 F_h = time_avg(data['F_h(r)'])
 F_κ = time_avg(data['F_κ(r)'])
 F_KE = time_avg(data['F_KE(r)'])
-Q_source = time_avg(data['F_source(r)'])
+Q_source = time_avg(data['Q_source(r)'])
 #F_μ_avg = time_avg(data['<Fμr>'])
 
 fig_Q, ax_Q = plt.subplots(figsize=(4.5,4/1.5))
