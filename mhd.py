@@ -17,7 +17,7 @@ Options:
     --benchmark                          Use benchmark initial conditions
     --ell_benchmark=<ell_benchmark>      Integer value of benchmark perturbation m=+-ell [default: 3]
 
-    --thermal_eq                         Start with thermally equilibrated (unstable) ICs
+    --thermal_equilibrium                Start with thermally equilibrated (unstable) ICs
     --scale_eq=<scale_eq>                Scalie unstable profile by fixed amount [default: 0.1]
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
@@ -44,7 +44,6 @@ Options:
 import numpy as np
 from dedalus.tools.parallel import Sync
 from mpi4py import MPI
-import time
 
 import pathlib
 import os
@@ -67,6 +66,8 @@ dlog.setLevel(logging.ERROR)
 data_dir = sys.argv[0].split('.py')[0]
 data_dir += '_Co{}_Ek{}_Pr{}_Pm{}'.format(args['--ConvectiveRossbySq'],args['--Ekman'],args['--Prandtl'],args['--MagneticPrandtl'])
 data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
+if args['--thermal_equilibrium']:
+    data_dir += '_therm'
 if args['--benchmark']:
     data_dir += '_benchmark'
 if args['--label']:
@@ -85,7 +86,6 @@ with Sync() as sync:
 
 import dedalus.public as de
 from dedalus.extras import flow_tools
-from dedalus.core.basis import SphericalAzimuthalAverage, SphericalAverage
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
@@ -119,12 +119,11 @@ logger.debug('-'*40)
 logger.info("Run parameters")
 logger.info("Ek = {}, Co2 = {}, Pr = {}, Pm = {}".format(Ek,Co2,Pr,Pm))
 
-dealias = L_dealias = N_dealias = 3/2
+dealias = 3/2
 
-start_time = time.time()
 c = de.SphericalCoordinates('phi', 'theta', 'r')
-d = de.Distributor((c,), mesh=mesh, dtype=np.float64)
-b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=(L_dealias,L_dealias,N_dealias), dtype=np.float64)
+d = de.Distributor(c, mesh=mesh, dtype=np.float64)
+b = de.BallBasis(c, (Nφ,Nθ,Nr), radius=radius, dealias=dealias, dtype=np.float64)
 phi, theta, r = b.local_grids()
 
 u = d.VectorField(c, name="u", bases=b)
@@ -150,8 +149,8 @@ trans = lambda A: de.TransposeComponents(A)
 radial = lambda A: de.RadialComponent(A)
 angular = lambda A: de.AngularComponent(A, index=1)
 trace = lambda A: de.Trace(A)
-power = lambda A, B: de.Power(A, B)
-lift = lambda A, n: de.LiftTau(A,b,n)
+bk2 = b.clone_with(k=2)
+lift = lambda A, n: de.LiftTau(A,bk2,n)
 integ = lambda A: de.Integrate(A, c)
 azavg = lambda A: de.Average(A, c.coords[0])
 shellavg = lambda A: de.Average(A, c.S2coordsys)
@@ -166,10 +165,10 @@ ez = d.VectorField(c, name='ez', bases=bk)
 ez['g'][1] = -np.sin(theta)
 ez['g'][2] =  np.cos(theta)
 
-r_vec = d.VectorField(c, name='r_vec', bases=b.radial_basis)
+r_vec = d.VectorField(c, name='r_vec', bases=bk2.radial_basis)
 r_vec['g'][2] = r
 
-r_S2 = d.VectorField(c)
+r_S2 = d.VectorField(c, name='r_hat_S2')
 r_S2['g'][2] = 1
 
 
@@ -177,6 +176,7 @@ r_S2['g'][2] = 1
 source_func = d.Field(name='S', bases=b)
 source_func['g'] =  Ek/Pr*3
 source = de.Grid(source_func).evaluate()
+source.name = 'source'
 
 e = grad(u) + trans(grad(u))
 e.store_last = True
@@ -207,7 +207,7 @@ logger.info("Problem built")
 solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
-if args['--thermal_eq']:
+if args['--thermal_equilibrium']:
     s['g'] = float(args['--scale_eq'])*0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
@@ -233,11 +233,11 @@ if invert_B_to_A:
                                  ( 3*r*(2-5*r**2+4*r**4)*np.sin(theta)
                                  +2*(1-3*r**2+3*r**4)*(np.cos(phi)-np.sin(phi)))
     logger.info("set initial conditions for B")
-    IC_problem = de.LBVP([φ, A, τ_A])
-    IC_problem.add_equation((div(A), 0))
-    IC_problem.add_equation((curl(A) + grad(φ) + Lift(τ_A, -1), B_IC))
-    IC_problem.add_equation((radial(grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0), condition = "ntheta != 0")
-    IC_problem.add_equation((φ(r=radius), 0), condition = "ntheta == 0")
+    IC_problem = de.LBVP([φ, A, τ_φ, τ_A])
+    IC_problem.add_equation((div(A) + τ_φ, 0))
+    IC_problem.add_equation((curl(A) + grad(φ) + lift(τ_A, -1), B_IC))
+    IC_problem.add_equation((integ(φ), 0))
+    IC_problem.add_equation((dot(r_S2, grad(A)(r=radius))+ellp1(A)(r=radius)/radius, 0))
     IC_solver = IC_problem.build_solver()
     IC_solver.solve()
     logger.info("solved for initial conditions for A")
@@ -321,6 +321,10 @@ slices.add_task(azavg(Aφ), name='<Aφ>')
 slices.add_task(azavg(Ωz), name='<Ωz>')
 slices.add_task(azavg(s), name='<s>')
 slices.add_task(shellavg(s), name='s(r)')
+slices.add_task(shellavg(Co2*dot(er, u)*s), name='F_h(r)')
+slices.add_task(shellavg(dot(er, u)*dot(u,u)), name='F_KE(r)')
+slices.add_task(shellavg(-Co2*Ek/Pr*dot(er, grad(s))), name='F_κ(r)')
+slices.add_task(shellavg(Co2*source), name='Q_source(r)')
 slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
 
 checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
@@ -351,11 +355,8 @@ else:
 if args['--run_time_iter']:
     solver.stop_iteration = int(float(args['--run_time_iter']))
 
-startup_iter = 10
 good_solution = True
 while solver.proceed and good_solution:
-    if solver.iteration == startup_iter:
-        main_start = time.time()
     if not args['--fixed_dt']:
         dt = CFL.compute_timestep()
     if solver.iteration % report_cadence == 0 and solver.iteration > 0:
@@ -378,18 +379,5 @@ while solver.proceed and good_solution:
         good_solution = np.isfinite(E0)
     solver.step(dt)
 
-end_time = time.time()
-
-startup_time = main_start - start_time
-main_loop_time = end_time - main_start
-DOF = Nφ*Nθ*Nr
-niter = solver.iteration - startup_iter
-if rank==0:
-    print('performance metrics:')
-    print('    startup time   : {:}'.format(startup_time))
-    print('    main loop time : {:}'.format(main_loop_time))
-    print('    main loop iter : {:d}'.format(niter))
-    print('    wall time/iter : {:f}'.format(main_loop_time/niter))
-    print('          iter/sec : {:f}'.format(niter/main_loop_time))
-    print('DOF-cycles/cpu-sec : {:}'.format(DOF*niter/(ncpu*main_loop_time)))
 solver.log_stats()
+logger.debug("mode-stages/DOF = {}".format(solver.total_modes/(Nφ*Nθ*Nr)))

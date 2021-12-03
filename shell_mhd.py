@@ -191,6 +191,7 @@ r_S2['g'][2] = 1
 source_func = d.Field(name='S', bases=b)
 source_func['g'] =  Ek/Pr*3
 source = de.Grid(source_func).evaluate()
+source.name = 'source'
 
 e = grad(u) + trans(grad(u))
 e.store_last = True
@@ -229,7 +230,7 @@ solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
 if args['--thermal_equilibrium']:
-    s['g'] = 0.5*(1-r**2) # static solution
+    s['g'] = float(args['--scale_eq'])*0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
