@@ -18,7 +18,7 @@ Options:
     --benchmark                          Use benchmark initial conditions
     --ell_benchmark=<ell_benchmark>      Integer value of benchmark perturbation m=+-ell [default: 3]
 
-    --thermal_eq                         Start with thermally equilibrated (unstable) ICs
+    --thermal_equilibrium                Start with thermally equilibrated (unstable) ICs
     --scale_eq=<scale_eq>                Scalie unstable profile by fixed amount [default: 0.1]
 
     --max_dt=<max_dt>                    Largest possible timestep [default: 0.1]
@@ -68,6 +68,8 @@ data_dir = sys.argv[0].split('.py')[0]
 data_dir += '_Co{}_Ek{}_Pr{}_Pm{}'.format(args['--ConvectiveRossbySq'],args['--Ekman'],args['--Prandtl'],args['--MagneticPrandtl'])
 data_dir += '_ri{}'.format(args['--r_inner'])
 data_dir += '_Th{}_R{}'.format(args['--Ntheta'], args['--Nr'])
+if args['--thermal_equilibrium']:
+    data_dir += '_therm'
 if args['--benchmark']:
     data_dir += '_benchmark'
 if args['--label']:
@@ -226,7 +228,8 @@ logger.info("Problem built")
 solver = problem.build_solver(de.SBDF2, ncc_cutoff=ncc_cutoff)
 
 # ICs
-s['g'] = 0.5*(1-r**2) # static solution
+if args['--thermal_equilibrium']:
+    s['g'] = 0.5*(1-r**2) # static solution
 if args['--benchmark']:
     amp = 1e-1
     𝓁 = int(args['--ell_benchmark'])
@@ -346,16 +349,17 @@ slices.add_task(azavg(Aφ), name='<Aφ>')
 slices.add_task(azavg(Ωz), name='<Ωz>')
 slices.add_task(azavg(s), name='<s>')
 slices.add_task(shellavg(s), name='s(r)')
-slices.add_task(shellavg(dot(er, u)*(p-0.5*dot(u,u))), name='F_h(r)')
+#slices.add_task(shellavg(dot(er, u)*(p-0.5*dot(u,u))), name='F_h(r)')
+slices.add_task(shellavg(Co2*dot(er, u)*s), name='F_h(r)')
 slices.add_task(shellavg(dot(er, u)*dot(u,u)), name='F_KE(r)')
 slices.add_task(shellavg(-Co2*Ek/Pr*dot(er, grad(s))), name='F_κ(r)')
-slices.add_task(shellavg(Co2*source), name='F_source(r)')
+slices.add_task(shellavg(Co2*source), name='Q_source(r)')
 slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
 
 checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
 checkpoint.add_tasks(solver.state)
 
-report_cadence = 10
+report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
 flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
 flow.add_property(np.sqrt(enstrophy), name='Ro')
