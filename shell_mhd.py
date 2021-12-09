@@ -303,21 +303,77 @@ else:
     write, dt = solver.load_state(args['--restart'])
     mode = 'append'
 
+# Analysis
+eφ = d.VectorField(c, bases=b)
+eφ['g'][0] = 1
+eθ = d.VectorField(c, bases=b)
+eθ['g'][1] = 1
+er = d.VectorField(c, bases=b)
+er['g'][2] = 1
+
+ur = dot(u, er)
+uθ = dot(u, eθ)
+uφ = dot(u, eφ)
+Br = dot(B, er)
+Bθ = dot(B, eθ)
+Bφ = dot(B, eφ)
+Aφ = dot(A, eφ)
+
+ρ_cyl = d.Field(bases=b)
+ρ_cyl['g'] = r*np.sin(theta)
+Ωz = uφ/ρ_cyl # this is not ω_z; misses gradient terms; this is angular differential rotation.
+
+u_fluc = u - azavg(ur)*er - azavg(uθ)*eθ - azavg(uφ)*eφ
+u_fluc.store_last = True
+
+B_fluc = B - azavg(Br)*er - azavg(Bθ)*eθ - azavg(Bφ)*eφ
+B_fluc.store_last = True
+
 KE = 0.5*dot(u,u)
-PE = Co2*s
-Lz = dot(cross(r_vec,u), ez)
+DRKE = 0.5*(azavg(uφ)**2)
+MCKE = 0.5*(azavg(ur)**2 + azavg(uθ)**2)
+FKE = KE - DRKE - MCKE #0.5*dot(u_fluc, u_fluc)
+KE.store_last = True
+DRKE.store_last = True
+MCKE.store_last = True
+FKE.store_last = True
+
 ME = 0.5*dot(B,B)
+TME = 0.5*(azavg(Bφ)**2)
+PME = 0.5*(azavg(Br)**2 + azavg(Bθ)**2)
+FME = ME - TME - PME #0.5*dot(B_fluc, B_fluc)
 ME.store_last = True
+TME.store_last = True
+PME.store_last = True
+FME.store_last = True
+
+PE = Co2*s
+PE.store_last = True
+
+Lz = dot(cross(r_vec,u), ez)
+
+
 enstrophy = dot(curl(u),curl(u))
 enstrophy.store_last = True
+
+enstrophy_fluc = dot(curl(u_fluc),curl(u_fluc))
+enstrophy_fluc.store_last = True
 
 scalar_dt = float(args['--scalar_dt'])
 traces = solver.evaluator.add_file_handler(data_dir+'/traces', sim_dt=scalar_dt, max_writes=np.inf, virtual_file=True, mode=mode)
 traces.add_task(avg(KE), name='KE')
+traces.add_task(avg(DRKE), name='DRKE')
+traces.add_task(avg(MCKE), name='MCKE')
+traces.add_task(avg(FKE), name='FKE')
 traces.add_task(avg(ME), name='ME')
+traces.add_task(avg(TME), name='TME')
+traces.add_task(avg(PME), name='PME')
+traces.add_task(avg(FME), name='FME')
 traces.add_task(integ(KE)/Ek**2, name='E0')
 traces.add_task(np.sqrt(avg(enstrophy)), name='Ro')
-traces.add_task(np.sqrt(avg(KE)*2)/Ek, name='Re')
+traces.add_task(np.sqrt(dot(u,u))/Ek, name='Re')
+traces.add_task(np.sqrt(avg(enstrophy_fluc)), name='Ro_fluc')
+traces.add_task(np.sqrt(dot(u_fluc,u_fluc))/Ek, name='Re_fluc')
 traces.add_task(avg(PE), name='PE')
 traces.add_task(avg(Lz), name='Lz')
 traces.add_task(np.abs(τ_p), name='τ_p')
@@ -329,18 +385,6 @@ traces.add_task(shellavg(np.abs(τ_s2)), name='τ_s2')
 traces.add_task(shellavg(np.sqrt(dot(τ_u2,τ_u2))), name='τ_u2')
 traces.add_task(shellavg(np.sqrt(dot(τ_A2,τ_A2))), name='τ_A2')
 
-
-# Analysis
-eφ = d.VectorField(c, bases=b)
-eφ['g'][0] = 1
-er = d.VectorField(c, bases=b)
-er['g'][2] = 1
-Bφ = dot(B, eφ)
-Aφ = dot(A, eφ)
-ρ_cyl = d.Field(bases=b)
-ρ_cyl['g'] = r*np.sin(theta)
-Ωz = dot(u, eφ)/ρ_cyl # this is not ω_z; misses gradient terms; this is angular differential rotation.
-
 slice_dt = float(args['--slice_dt'])
 slices = solver.evaluator.add_file_handler(data_dir+'/slices', sim_dt = slice_dt, max_writes = 10, virtual_file=True, mode=mode)
 slices.add_task(s(theta=np.pi/2), name='s')
@@ -350,20 +394,21 @@ slices.add_task(azavg(Aφ), name='<Aφ>')
 slices.add_task(azavg(Ωz), name='<Ωz>')
 slices.add_task(azavg(s), name='<s>')
 slices.add_task(shellavg(s), name='s(r)')
-#slices.add_task(shellavg(dot(er, u)*(p-0.5*dot(u,u))), name='F_h(r)')
-slices.add_task(shellavg(Co2*dot(er, u)*s), name='F_h(r)')
-slices.add_task(shellavg(dot(er, u)*dot(u,u)), name='F_KE(r)')
+slices.add_task(shellavg(Co2*dot(u, er)*s), name='F_h(r)')
+slices.add_task(shellavg(dot(u, er)*dot(u,u)), name='F_KE(r)')
 slices.add_task(shellavg(-Co2*Ek/Pr*dot(er, grad(s))), name='F_κ(r)')
 slices.add_task(shellavg(Co2*source), name='Q_source(r)')
-slices.add_task(dot(B,er)(r=radius), name='Br') # is this sufficient?  Should we be using radial(B) instead?
+slices.add_task(Br(r=radius), name='Br')
 
 checkpoint = solver.evaluator.add_file_handler(data_dir+'/checkpoints', wall_dt = 3600, max_writes = 1, virtual_file=True, mode=mode)
 checkpoint.add_tasks(solver.state)
 
 report_cadence = 100
 flow = flow_tools.GlobalFlowProperty(solver, cadence=report_cadence)
-flow.add_property(np.sqrt(KE*2)/Ek, name='Re')
+flow.add_property(np.sqrt(dot(u,u))/Ek, name='Re')
 flow.add_property(np.sqrt(enstrophy), name='Ro')
+flow.add_property(np.sqrt(dot(u_fluc,u_fluc))/Ek, name='Re_fluc')
+flow.add_property(np.sqrt(enstrophy_fluc), name='Ro_fluc')
 flow.add_property(KE, name='KE')
 flow.add_property(ME, name='ME')
 flow.add_property(PE, name='PE')
@@ -399,6 +444,8 @@ while solver.proceed and good_solution:
         E0 = KE_avg/Ek**2
         Re_avg = flow.grid_average('Re')
         Ro_avg = flow.grid_average('Ro')
+        Re_fluc_avg = flow.grid_average('Re_fluc')
+        Ro_fluc_avg = flow.grid_average('Ro_fluc')
         ME_avg = flow.grid_average('ME')
         PE_avg = flow.grid_average('PE')
         Lz_avg = flow.grid_average('Lz')
@@ -414,7 +461,7 @@ while solver.proceed and good_solution:
 
         log_string = "iter: {:d}, dt={:.1e}, t={:.3e} ({:.2e})".format(solver.iteration, dt, solver.sim_time, solver.sim_time*Ek)
         log_string += ", KE={:.2e}, ME={:.2e}, PE={:.2e}".format(KE_avg, ME_avg, PE_avg)
-        log_string += ", Re={:.1e}, Ro={:.1e}".format(Re_avg, Ro_avg)
+        log_string += ", Re={:.1e}/{:.1e}, Ro={:.1e}/{:.1e}".format(Re_avg, Re_fluc_avg, Ro_avg, Ro_fluc_avg)
         log_string += ", Lz={:.1e}, τ={:.1e}".format(Lz_avg, τ_max)
         logger.info(log_string)
 
